@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* Oscuro por clase (móvil / PWA / preferencia del sistema), alineado con la web en dark. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+/* Misma paleta que `prefers-color-scheme: dark` cuando activamos `.dark` por script (móvil, etc.). */
+html.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  background: var(--background);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* PWA instalada: el script ya añade `.dark`; aquí solo overscroll e hint. */
+@media (display-mode: standalone) {
+  html {
+    background: var(--background);
+  }
+
+  body {
+    overscroll-behavior-y: contain;
+  }
+
+  .pwa-install-hint {
+    display: none;
+  }
+}
+
+/* Evita selección accidental al tocar botones en móvil */
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}

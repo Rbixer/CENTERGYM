@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Opción de Turno / Entrenador (lista desplegable del alumno)
+model TrainerGroup {
+  id          String       @id @default(cuid())
+  label       String
+  sortOrder   Int          @default(0)
+  submissions Submission[]
+}
+
+model Question {
+  id        String           @id @default(cuid())
+  text      String
+  sortOrder Int              @default(0)
+  options   QuestionOption[]
+  answers   Answer[]
+}
+
+model QuestionOption {
+  id         String     @id @default(cuid())
+  questionId String
+  question   Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  text       String
+  sortOrder  Int        @default(0)
+  answers    Answer[]   @relation("SelectedOption")
+}
+
+model Submission {
+  id             String       @id @default(cuid())
+  trainerGroupId String
+  trainerGroup   TrainerGroup @relation(fields: [trainerGroupId], references: [id])
+  submittedAt    DateTime     @default(now())
+  /// Valoración 1–5 estrellas del entrenador / turno elegido
+  trainerRating  Int?
+  /// Comentario libre del alumno sobre el entrenador / turno
+  trainerComment String?
+  answers        Answer[]
+}
+
+model Answer {
+  id               String         @id @default(cuid())
+  submissionId     String
+  submission       Submission     @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  questionId       String
+  question         Question       @relation(fields: [questionId], references: [id])
+  selectedOptionId String
+  selectedOption   QuestionOption @relation("SelectedOption", fields: [selectedOptionId], references: [id])
+}
