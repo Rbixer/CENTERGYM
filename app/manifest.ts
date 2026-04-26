@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "GYM CENTER",
     short_name: "gymcenter",
     description:
-      "Encuesta GYM CENTER: turnos, entrenadores y resultados. Instalable en el móvil.",
+      "GYM CENTER: inicio con encuesta, tienda y rutinas. Instalable en el móvil.",
     start_url: "/",
     scope: "/",
     display: "standalone",

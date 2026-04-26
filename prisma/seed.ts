@@ -3,6 +3,28 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
+  await prisma.routine.deleteMany();
+  await prisma.routine.createMany({
+    data: [
+      {
+        name: "Ejemplo — tren superior",
+        description:
+          "Movimientos básicos para pecho y espalda. Consulta con tu entrenador antes de aplicar cargas.",
+        gifUrl: "/images/routines/placeholder.gif",
+        category: "pecho",
+        sortOrder: 0,
+      },
+      {
+        name: "Ejemplo — piernas",
+        description:
+          "Activación y trabajo de cuádriceps e isquiotibiales. Ajusta series según tu nivel.",
+        gifUrl: "/images/routines/placeholder.gif",
+        category: "piernas",
+        sortOrder: 1,
+      },
+    ],
+  });
+
   await prisma.answer.deleteMany();
   await prisma.submission.deleteMany();
   await prisma.questionOption.deleteMany();

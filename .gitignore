@@ -44,3 +44,10 @@ next-env.d.ts
 # sqlite
 /prisma/dev.db
 /prisma/dev.db-journal
+
+# fotos de productos (subidas desde el panel)
+/public/uploads/
+
+# GIFs de rutinas subidos (se versiona placeholder.gif)
+/public/images/routines/*
+!/public/images/routines/placeholder.gif

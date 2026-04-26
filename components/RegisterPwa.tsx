@@ -33,6 +33,15 @@ export function RegisterPwa() {
       return;
     }
 
+    /* En `next dev` el SW puede servir caché de otra origen (p. ej. probaste con localhost
+       y luego con la IP) y dejar la app en blanco en el móvil. */
+    if (process.env.NODE_ENV === "development") {
+      void navigator.serviceWorker.getRegistrations().then((regs) => {
+        for (const r of regs) void r.unregister();
+      });
+      return;
+    }
+
     if (pathname.startsWith("/admin")) {
       void navigator.serviceWorker.getRegistrations().then((regs) => {
         for (const r of regs) void r.unregister();

@@ -1,25 +1,25 @@
-import Image from "next/image";
-
 const LOGO = "/gymcenter-logo.png";
 
 type Props = {
-  /** Prioridad de carga (portada / admin). */
-  priority?: boolean;
   className?: string;
 };
 
-/** Logo GYM CENTER (180×180 en `public/gymcenter-logo.png`). */
+/**
+ * Logo GYM CENTER (`public/gymcenter-logo.png`).
+ * Usa `<img>` nativo (no `next/image`) para el LCP: evita el aviso de Next sobre `loading="eager"`.
+ */
 export function GymCenterLogo({
-  priority = false,
   className = "h-auto w-auto max-h-[7.5rem] max-w-[min(100%,280px)] object-contain",
 }: Props) {
   return (
-    <Image
+    <img
       src={LOGO}
       alt="GYM CENTER"
       width={180}
       height={180}
-      priority={priority}
+      decoding="sync"
+      fetchPriority="high"
+      loading="eager"
       className={className}
     />
   );

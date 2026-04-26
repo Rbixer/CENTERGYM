@@ -3,6 +3,7 @@ import Script from "next/script";
 import { Suspense } from "react";
 import "./globals.css";
 import { RegisterPwa } from "@/components/RegisterPwa";
+import { ToastProvider } from "@/components/ToastProvider";
 
 const metadataBase = process.env.NEXT_PUBLIC_APP_URL
   ? new URL(process.env.NEXT_PUBLIC_APP_URL)
@@ -40,9 +41,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  /** Evita corte lateral en muescas; el shell admin usa `min-w-0` y `overflow-x-clip` */
   viewportFit: "cover",
   /** Barra del sistema / Chrome en móvil al usar la PWA (negro). */
   themeColor: "#000000",
+  // Android/Chrome: el teclado no tapa toda la vista; útil en formularios del admin.
+  interactiveWidget: "resizes-content",
 };
 
 export default function RootLayout({
@@ -51,8 +55,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className="h-full antialiased" suppressHydrationWarning>
-      <body className="font-sans min-h-full min-h-[100dvh] flex flex-col touch-manipulation">
+    <html lang="es" className="h-full min-w-0 antialiased" suppressHydrationWarning>
+      <body className="font-sans min-h-0 min-w-0 min-h-[100dvh] flex flex-col touch-manipulation">
         <Script id="theme-mobile-dark" strategy="beforeInteractive">
           {`(function(){
 function sync(){
@@ -75,7 +79,7 @@ try{
         <Suspense fallback={null}>
           <RegisterPwa />
         </Suspense>
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );

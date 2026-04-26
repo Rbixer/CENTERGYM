@@ -48,7 +48,7 @@ export default function AdminLoginPage() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-md flex-1 flex-col justify-center px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-8 sm:py-16">
+    <div className="mx-auto flex w-full min-w-0 max-w-md min-h-[100dvh] flex-1 flex-col justify-center px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-8 sm:py-16">
       <div className="flex justify-center">
         <GymCenterLogo className="max-h-28 w-auto max-w-[260px] object-contain" />
       </div>

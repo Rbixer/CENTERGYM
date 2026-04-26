@@ -53,3 +53,50 @@ model Answer {
   selectedOptionId String
   selectedOption   QuestionOption @relation("SelectedOption", fields: [selectedOptionId], references: [id])
 }
+
+/// Producto a la venta (catálogo para alumnos en /tienda)
+model Product {
+  id         String           @id @default(cuid())
+  name       String
+  priceCents Int
+  imageUrl   String
+  sortOrder  Int              @default(0)
+  active     Boolean          @default(true)
+  createdAt  DateTime         @default(now())
+  lines      SalesOrderLine[]
+}
+
+/// Pedido de productos enviado desde la tienda pública
+model SalesOrder {
+  id           String           @id @default(cuid())
+  studentName  String?
+  studentNote  String?
+  submittedAt  DateTime         @default(now())
+  verified     Boolean          @default(false)
+  verifiedAt   DateTime?
+  lines        SalesOrderLine[]
+}
+
+model SalesOrderLine {
+  id        String     @id @default(cuid())
+  orderId   String
+  order     SalesOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity  Int        @default(1)
+
+  @@unique([orderId, productId])
+}
+
+/// Rutina de entrenamiento (página pública /rutina, admin /admin/rutinas)
+model Routine {
+  id          String   @id @default(cuid())
+  name        String
+  description String
+  gifUrl      String
+  /// Slug de zona/tipo (`lib/routine-categories`): biceps, piernas, etc.
+  category    String   @default("general")
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

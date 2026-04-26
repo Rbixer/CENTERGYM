@@ -65,3 +65,14 @@ button,
 a {
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Panel /admin: ancho al viewport, sin forzar scroll horizontal; inputs ≥16px en móvil (iOS no hace zoom al foco) */
+.admin-app-shell {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .admin-app-shell :is(input, textarea, select) {
+    font-size: 1rem;
+  }
+}

@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AdminResultsCharts } from "@/components/AdminResultsCharts";
+import { AdminRutinasPanel } from "@/components/AdminRutinasPanel";
+import { AdminVentasTab } from "@/components/AdminVentasTab";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
+import { useToast } from "@/components/ToastProvider";
 
-type Tab = "preguntas" | "turnos" | "resultados";
+type Tab = "preguntas" | "turnos" | "resultados" | "ventas" | "rutinas";
 
 type QuestionOption = {
   id: string;
@@ -152,12 +156,12 @@ export function AdminPanel() {
   }
 
   return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-5xl flex-1 flex-col px-4 pb-[max(2rem,env(safe-area-inset-bottom))] pt-6 sm:py-8">
-      <header className="flex flex-col gap-4 border-b border-zinc-200 pb-6 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-1 flex-col px-3 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-5 min-h-[100dvh] min-[400px]:px-4 sm:px-4 sm:py-8 sm:pb-[max(2rem,env(safe-area-inset-bottom))]">
+      <header className="flex min-w-0 flex-col gap-4 border-b border-zinc-200 pb-6 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <GymCenterLogo className="max-h-20 w-auto max-w-[220px] object-contain object-left sm:max-h-24" />
           <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-            Preguntas, turnos y distribución de respuestas
+            Preguntas, turnos, resultados, ventas y rutinas
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -171,12 +175,14 @@ export function AdminPanel() {
         </div>
       </header>
 
-      <nav className="mt-6 grid w-full grid-cols-3 gap-1 border-b border-zinc-200 dark:border-zinc-800 sm:flex sm:flex-wrap sm:gap-2">
+      <nav className="mt-6 grid w-full min-w-0 grid-cols-2 gap-1 border-b border-zinc-200 dark:border-zinc-800 sm:flex sm:flex-wrap sm:gap-2">
         {(
           [
             ["preguntas", "Preguntas", "Preguntas"],
             ["turnos", "Turno / Entrenador", "Turnos"],
             ["resultados", "Resultados", "Resultados"],
+            ["ventas", "Ventas", "Ventas"],
+            ["rutinas", "Rutinas", "Rutinas"],
           ] as const
         ).map(([k, label, shortLabel]) => (
           <button
@@ -190,7 +196,9 @@ export function AdminPanel() {
             title={label}
             className={
               tab === k
-                ? "-mb-px border-b-2 border-emerald-600 px-2 py-2 text-center text-xs font-medium text-emerald-700 sm:px-3 sm:text-sm dark:text-emerald-400"
+                ? k === "rutinas"
+                  ? "-mb-px border-b-2 border-violet-600 px-2 py-2 text-center text-xs font-medium text-violet-700 sm:px-3 sm:text-sm dark:text-violet-400"
+                  : "-mb-px border-b-2 border-emerald-600 px-2 py-2 text-center text-xs font-medium text-emerald-700 sm:px-3 sm:text-sm dark:text-emerald-400"
                 : "px-2 py-2 text-center text-xs text-zinc-500 hover:text-foreground sm:px-3 sm:text-sm"
             }
           >
@@ -207,7 +215,7 @@ export function AdminPanel() {
         <p className="mt-4 text-sm text-red-600 dark:text-red-400">{resultsError}</p>
       ) : null}
 
-      <main className="mt-8 flex-1">
+      <main className="mt-8 w-full min-w-0 min-h-0 flex-1">
         {tab === "preguntas" ? (
           <QuestionsTab questions={questions} onChange={refreshQuestions} />
         ) : null}
@@ -223,6 +231,22 @@ export function AdminPanel() {
             pie={pie}
             onRefresh={refreshResults}
           />
+        ) : null}
+        {tab === "ventas" ? <AdminVentasTab /> : null}
+        {tab === "rutinas" ? (
+          <div>
+            <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+              También puedes usar la página dedicada{" "}
+              <Link
+                href="/admin/rutinas"
+                className="font-medium text-violet-700 underline underline-offset-2 dark:text-violet-400"
+              >
+                /admin/rutinas
+              </Link>{" "}
+              (mismo CRUD).
+            </p>
+            <AdminRutinasPanel />
+          </div>
         ) : null}
       </main>
     </div>
@@ -240,16 +264,16 @@ function QuestionsTab({
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+    <div className="min-w-0 space-y-6">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <p className="min-w-0 text-sm text-zinc-600 dark:text-zinc-400">
           Cada pregunta solo admite respuesta <strong>Sí</strong> o{" "}
           <strong>No</strong>. Escribe el enunciado y guarda.
         </p>
         <button
           type="button"
           onClick={() => setCreating(true)}
-          className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+          className="shrink-0 self-start rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 sm:self-center"
         >
           Nueva pregunta
         </button>
@@ -292,6 +316,7 @@ function QuestionRow({
   onSaved: () => Promise<void>;
   onError: (s: string | null) => void;
 }) {
+  const { confirm } = useToast();
   const [editing, setEditing] = useState(false);
   return (
     <li className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
@@ -327,12 +352,10 @@ function QuestionRow({
             <button
               type="button"
               onClick={async () => {
-                if (
-                  !confirm(
-                    "¿Borrar esta pregunta? Se eliminarán también las respuestas guardadas de esa pregunta en envíos anteriores.",
-                  )
-                )
-                  return;
+                const ok = await confirm(
+                  "¿Borrar esta pregunta? Se eliminarán también las respuestas guardadas de esa pregunta en envíos anteriores.",
+                );
+                if (!ok) return;
                 onError(null);
                 const res = await fetch(`/api/admin/questions/${question.id}`, {
                   method: "DELETE",
@@ -499,6 +522,7 @@ function TrainerRow({
   trainer: Trainer;
   onChange: () => Promise<void>;
 }) {
+  const { confirm } = useToast();
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(trainer.label);
   const [error, setError] = useState<string | null>(null);
@@ -569,12 +593,10 @@ function TrainerRow({
             <button
               type="button"
               onClick={async () => {
-                if (
-                  !confirm(
-                    "¿Borrar este turno / entrenador? Se eliminarán todos los envíos de encuesta asociados a esa opción.",
-                  )
-                )
-                  return;
+                const ok = await confirm(
+                  "¿Borrar este turno / entrenador? Se eliminarán todos los envíos de encuesta asociados a esa opción.",
+                );
+                if (!ok) return;
                 setError(null);
                 const res = await fetch(`/api/admin/trainers/${trainer.id}`, {
                   method: "DELETE",
@@ -620,13 +642,13 @@ function ResultsTab({
   onRefresh: () => Promise<void>;
 }) {
   return (
-    <div className="space-y-10">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+    <div className="min-w-0 space-y-10">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
+        <p className="min-w-0 text-sm text-zinc-600 dark:text-zinc-400">
           Sí vs No, calificación por estrellas, comentarios, distribución por
           pregunta y envíos.
         </p>
-        <div className="flex gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <button
             type="button"
             onClick={() => void onRefresh()}

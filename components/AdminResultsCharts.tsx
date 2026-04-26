@@ -90,7 +90,7 @@ export function AdminResultsCharts({
   const hasTrainerAnswers = trainerSiNo.some((t) => t.total > 0);
 
   return (
-    <>
+    <div className="w-full min-w-0 space-y-10">
       <section>
         <h2 className="text-lg font-semibold">
           Por entrenador: Sí (positivo) vs No (negativo)
@@ -424,6 +424,6 @@ export function AdminResultsCharts({
           )}
         </div>
       </section>
-    </>
+    </div>
   );
 }
