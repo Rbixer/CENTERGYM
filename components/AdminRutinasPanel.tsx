@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { parseResponseJson } from "@/lib/parse-response-json";
 import { ROUTINE_SETUP_ADMIN_HINT } from "@/lib/prisma-routine-health";
 import { presetLabelForPath } from "@/lib/routine-image-presets";
-import { ROUTINE_GALLERY_ASSETS, galleryLabelForPath } from "@/lib/routine-gallery-assets";
+import {
+  ROUTINE_GALLERY_ASSETS,
+  galleryLabelForPath,
+  galleryPathBasename,
+} from "@/lib/routine-gallery-assets";
 import {
   ROUTINE_CATEGORIES,
   type RoutineCategoryId,
@@ -43,6 +47,16 @@ export function AdminRutinasPanel() {
   /** Con IA disponible: «ai» genera desde texto; «manual» = ilustración elegida en la galería. */
   const [illustrationChoice, setIllustrationChoice] = useState<"ai" | "manual">("manual");
   const [categoryForm, setCategoryForm] = useState<RoutineCategoryId>(DEFAULT_ROUTINE_CATEGORY);
+  const [galleryFilesOnDisk, setGalleryFilesOnDisk] = useState<string[] | null>(null);
+  const [thumbLoadFailed, setThumbLoadFailed] = useState<Record<string, boolean>>({});
+
+  const missingGalleryOnDisk = useMemo(() => {
+    if (galleryFilesOnDisk === null) return [];
+    const set = new Set(galleryFilesOnDisk);
+    return ROUTINE_GALLERY_ASSETS.filter((a) => !set.has(galleryPathBasename(a.path))).map(
+      (a) => galleryPathBasename(a.path),
+    );
+  }, [galleryFilesOnDisk]);
 
   const refresh = useCallback(async () => {
     setLoadError(null);
@@ -104,6 +118,24 @@ export function AdminRutinasPanel() {
       cancelled = true;
     };
   }, []);
+
+  const refreshGalleryFiles = useCallback(async () => {
+    const res = await fetch("/api/admin/gallery-files", { credentials: "include" });
+    if (res.status === 401) {
+      setGalleryFilesOnDisk([]);
+      return;
+    }
+    if (!res.ok) {
+      setGalleryFilesOnDisk([]);
+      return;
+    }
+    const j = (await res.json().catch(() => ({}))) as { files?: string[] };
+    setGalleryFilesOnDisk(j.files ?? []);
+  }, []);
+
+  useEffect(() => {
+    void refreshGalleryFiles();
+  }, [refreshGalleryFiles]);
 
   function resetForm() {
     setName("");
@@ -392,6 +424,32 @@ export function AdminRutinasPanel() {
           ) : null}
 
           <div className="sm:col-span-2">
+            {missingGalleryOnDisk.length > 0 ? (
+              <div className="mb-3 rounded-xl border border-amber-300/80 bg-amber-50/90 px-3 py-2.5 text-sm text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100">
+                <p className="font-medium">Algunas ilustraciones no están en el disco del servidor</p>
+                <p className="mt-1 text-xs leading-relaxed opacity-95">
+                  Faltan en <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">public/images/routines/gallery/</code>
+                  {missingGalleryOnDisk.length > 6 ? " (entre otras): " : ": "}
+                  <span className="font-mono break-all text-[11px]">
+                    {missingGalleryOnDisk.slice(0, 8).join(", ")}
+                    {missingGalleryOnDisk.length > 8 ? "…" : ""}
+                  </span>
+                </p>
+                <p className="mt-1.5 text-xs leading-relaxed">
+                  Copia los archivos a <code className="rounded bg-black/5 px-1">public/images/routines/gallery/</code>, usa{" "}
+                  <code className="rounded bg-black/5 px-1">./scripts/install-routine-gallery-from-mappings.mjs</code> o{" "}
+                  <code className="rounded bg-black/5 px-1">./scripts/copy-gallery-nuevos.sh</code>; luego{" "}
+                  <button
+                    type="button"
+                    onClick={() => void refreshGalleryFiles()}
+                    className="font-medium text-amber-900 underline dark:text-amber-200"
+                  >
+                    volver a comprobar
+                  </button>
+                  .
+                </p>
+              </div>
+            ) : null}
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
               Galería de ilustraciones (una por fila)
             </p>
@@ -415,8 +473,24 @@ export function AdminRutinasPanel() {
                             : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
                         }`}
                       >
-                        <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800">
-                          <img src={p.path} alt="" className="h-full w-full object-cover" loading="lazy" />
+                        <div className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-600 dark:bg-zinc-800">
+                          {thumbLoadFailed[p.id] ? (
+                            <span className="px-1 text-center text-[9px] leading-tight text-zinc-500">
+                              Archivo
+                              <br />
+                              no encontrado
+                            </span>
+                          ) : (
+                            <img
+                              src={p.path}
+                              alt=""
+                              className="max-h-full max-w-full object-contain"
+                              loading="lazy"
+                              onError={() => {
+                                setThumbLoadFailed((prev) => ({ ...prev, [p.id]: true }));
+                              }}
+                            />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{p.label}</p>

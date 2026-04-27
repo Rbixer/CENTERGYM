@@ -51,3 +51,7 @@ next-env.d.ts
 # GIFs de rutinas subidos (se versiona placeholder.gif)
 /public/images/routines/*
 !/public/images/routines/placeholder.gif
+
+# Origen local para instalar galería (pega aquí los GIF; no subir a git)
+/gym/nuevos/*
+!/gym/nuevos/.gitkeep

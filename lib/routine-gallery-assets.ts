@@ -1,6 +1,10 @@
 /**
- * Ilustraciones copiadas desde la galería local (`Descargas/gym` → `public/images/routines/gallery/`).
- * Cada entrada es una fila independiente en el admin al crear/editar rutinas.
+ * Ilustraciones en `public/images/routines/gallery/` (routine-gallery-01 … 27).
+ * Origen típico: imágenes en `Descargas/gym` →
+ * `node scripts/install-routine-gallery-from-mappings.mjs` (o ruta como arg).
+ *
+ * Imágenes extra (hasta 7) sin tocar 01–27: carpeta `gym/nuevos` y
+ * el botón del admin / `scripts/copy-gallery-nuevos.sh` (slots 28–34).
  */
 export const ROUTINE_GALLERY_ASSETS = [
   { id: "gallery-01", label: "GIF base", path: "/images/routines/gallery/routine-gallery-01.gif" },
@@ -51,6 +55,21 @@ export const ROUTINE_GALLERY_ASSETS = [
     label: "Lying chest press machine — tutorial",
     path: "/images/routines/gallery/routine-gallery-24.gif",
   },
+  {
+    id: "gallery-25",
+    label: "Elevaciones laterales (agarre cerrado, barra Z)",
+    path: "/images/routines/gallery/routine-gallery-25.gif",
+  },
+  {
+    id: "gallery-26",
+    label: "Cinta / manual treadmill",
+    path: "/images/routines/gallery/routine-gallery-26.gif",
+  },
+  {
+    id: "gallery-27",
+    label: "Bicicleta estática (stationary bike)",
+    path: "/images/routines/gallery/routine-gallery-27.gif",
+  },
 ] as const;
 
 export type RoutineGalleryAssetId = (typeof ROUTINE_GALLERY_ASSETS)[number]["id"];
@@ -59,4 +78,9 @@ export function galleryLabelForPath(path: string): string | null {
   const t = path.trim();
   const g = ROUTINE_GALLERY_ASSETS.find((x) => x.path === t);
   return g?.label ?? null;
+}
+
+export function galleryPathBasename(publicPath: string): string {
+  const parts = publicPath.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? publicPath;
 }
