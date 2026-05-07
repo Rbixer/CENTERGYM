@@ -5,8 +5,8 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-api";
 import {
   ensureRoutineGifDir,
-  gifExtension,
-  isGifMime,
+  extensionForRoutineMedia,
+  isAllowedRoutineMediaMime,
   MAX_ROUTINE_GIF_BYTES,
   ROUTINE_GIF_SUBDIR,
 } from "@/lib/routine-gif-upload";
@@ -31,14 +31,17 @@ export async function POST(req: Request) {
 
   if (file.size > MAX_ROUTINE_GIF_BYTES) {
     return NextResponse.json(
-      { error: "El GIF no puede superar 12 MB" },
+      { error: "El archivo no puede superar 12 MB" },
       { status: 400 },
     );
   }
 
   const mime = file.type || "application/octet-stream";
-  if (!isGifMime(mime)) {
-    return NextResponse.json({ error: "Solo se permiten archivos GIF" }, { status: 400 });
+  if (!isAllowedRoutineMediaMime(mime)) {
+    return NextResponse.json(
+      { error: "Solo se permiten GIF, JPEG, PNG o WebP" },
+      { status: 400 },
+    );
   }
 
   try {
@@ -47,7 +50,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Archivo vacío o corrupto" }, { status: 400 });
     }
 
-    const name = `${randomBytes(12).toString("hex")}${gifExtension()}`;
+    const ext = extensionForRoutineMedia(mime);
+    if (!ext) {
+      return NextResponse.json({ error: "Tipo de archivo no soportado" }, { status: 400 });
+    }
+
+    const name = `${randomBytes(12).toString("hex")}${ext}`;
     await ensureRoutineGifDir();
     const abs = path.join(process.cwd(), "public", ROUTINE_GIF_SUBDIR, name);
     await writeFile(abs, buf);
@@ -57,7 +65,7 @@ export async function POST(req: Request) {
   } catch (e) {
     console.error("[api/admin/routines/upload]", e);
     return NextResponse.json(
-      { error: "No se pudo guardar el GIF en public/images/routines." },
+      { error: "No se pudo guardar el archivo en public/images/routines." },
       { status: 500 },
     );
   }

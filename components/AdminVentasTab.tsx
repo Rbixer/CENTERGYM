@@ -39,7 +39,9 @@ export function AdminVentasTab() {
   const { toast } = useToast();
   const router = useRouter();
   const [sub, setSub] = useState<Sub>("productos");
-  const [storeUrl, setStoreUrl] = useState("/tienda");
+  const [storeUrl] = useState(
+    typeof window === "undefined" ? "/tienda" : `${window.location.origin}/tienda`,
+  );
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<SalesOrder[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -52,10 +54,6 @@ export function AdminVentasTab() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [productMsg, setProductMsg] = useState<string | null>(null);
   const newProductFileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    setStoreUrl(`${window.location.origin}/tienda`);
-  }, []);
 
   const refreshProducts = useCallback(async (): Promise<string | null> => {
     const res = await fetch("/api/admin/products", { credentials: "include" });
@@ -117,11 +115,6 @@ export function AdminVentasTab() {
       cancelled = true;
     };
   }, [refreshProducts]);
-
-  useEffect(() => {
-    if (sub !== "pedidos") return;
-    void refreshOrders();
-  }, [sub, refreshOrders]);
 
   async function onPickImage(file: File | null) {
     setProductMsg(null);
@@ -244,6 +237,7 @@ export function AdminVentasTab() {
             onClick={() => {
               setSub(k);
               if (k === "pedidos") setOrdersError(null);
+              if (k === "pedidos") void refreshOrders();
             }}
             className={
               sub === k
@@ -277,7 +271,7 @@ export function AdminVentasTab() {
                   <input
                     ref={newProductFileInputRef}
                     type="file"
-                    accept="image/jpeg,image/png,image/webp"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
                     className="sr-only"
                     tabIndex={-1}
                     aria-label="Elegir archivo de imagen del producto"
@@ -298,12 +292,10 @@ export function AdminVentasTab() {
                 ) : null}
                 {newImageUrl ? (
                   <div className="relative mt-2 h-32 w-32 overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-600">
-                    <Image
+                    <img
                       src={newImageUrl}
                       alt="Vista previa"
-                      fill
-                      className="object-cover"
-                      unoptimized
+                      className="h-full w-full object-cover"
                     />
                   </div>
                 ) : null}

@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   const mime = file.type || "application/octet-stream";
   if (!isAllowedProductImageMime(mime)) {
     return NextResponse.json(
-      { error: "Solo se permiten JPEG, PNG o WebP" },
+      { error: "Solo se permiten JPEG, PNG, WebP o GIF" },
       { status: 400 },
     );
   }

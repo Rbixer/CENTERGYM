@@ -1,15 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from "react";
 import { useRouter } from "next/navigation";
 import { parseResponseJson } from "@/lib/parse-response-json";
 import { ROUTINE_SETUP_ADMIN_HINT } from "@/lib/prisma-routine-health";
 import { presetLabelForPath } from "@/lib/routine-image-presets";
-import {
-  ROUTINE_GALLERY_ASSETS,
-  galleryLabelForPath,
-  galleryPathBasename,
-} from "@/lib/routine-gallery-assets";
+import { ROUTINE_GALLERY_ASSETS, galleryLabelForPath } from "@/lib/routine-gallery-assets";
 import {
   ROUTINE_CATEGORIES,
   type RoutineCategoryId,
@@ -30,6 +26,15 @@ type Routine = {
   createdAt: string;
   updatedAt: string;
 };
+
+const ROUTINE_FALLBACK_SRC = "/images/routines/placeholder.gif";
+
+function withRoutineFallback(ev: SyntheticEvent<HTMLImageElement>) {
+  const img = ev.currentTarget;
+  if (img.dataset.fallbackApplied === "1") return;
+  img.dataset.fallbackApplied = "1";
+  img.src = ROUTINE_FALLBACK_SRC;
+}
 
 /** Una subcarpeta en `public/images/routines/uploads/` con sus GIFs. */
 type UploadFolderEntry = {
@@ -66,20 +71,14 @@ export function AdminRutinasPanel() {
   /** Con IA disponible: «ai» genera desde texto; «manual» = ilustración elegida en la galería. */
   const [illustrationChoice, setIllustrationChoice] = useState<"ai" | "manual">("manual");
   const [categoryForm, setCategoryForm] = useState<RoutineCategoryId>(DEFAULT_ROUTINE_CATEGORY);
-  const [galleryFilesOnDisk, setGalleryFilesOnDisk] = useState<string[] | null>(null);
-  const [thumbLoadFailed, setThumbLoadFailed] = useState<Record<string, boolean>>({});
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const routineFileInputRef = useRef<HTMLInputElement>(null);
+  const [galleryFiles, setGalleryFiles] = useState<string[]>([]);
+  const [galleryLoading, setGalleryLoading] = useState(true);
   const [uploadTree, setUploadTree] = useState<UploadFolderEntry[] | null>(null);
   /** Mensaje de progreso mientras se sube una carpeta seleccionada. */
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadingFolders, setUploadingFolders] = useState(false);
-
-  const missingGalleryOnDisk = useMemo(() => {
-    if (galleryFilesOnDisk === null) return [];
-    const set = new Set(galleryFilesOnDisk);
-    return ROUTINE_GALLERY_ASSETS.filter((a) => !set.has(galleryPathBasename(a.path))).map(
-      (a) => galleryPathBasename(a.path),
-    );
-  }, [galleryFilesOnDisk]);
 
   const refresh = useCallback(async () => {
     setLoadError(null);
@@ -142,23 +141,30 @@ export function AdminRutinasPanel() {
     };
   }, []);
 
-  const refreshGalleryFiles = useCallback(async () => {
-    const res = await fetch("/api/admin/gallery-files", { credentials: "include" });
-    if (res.status === 401) {
-      setGalleryFilesOnDisk([]);
-      return;
-    }
-    if (!res.ok) {
-      setGalleryFilesOnDisk([]);
-      return;
-    }
-    const j = (await res.json().catch(() => ({}))) as { files?: string[] };
-    setGalleryFilesOnDisk(j.files ?? []);
-  }, []);
-
   useEffect(() => {
-    void refreshGalleryFiles();
-  }, [refreshGalleryFiles]);
+    let cancelled = false;
+    (async () => {
+      setGalleryLoading(true);
+      const res = await fetch("/api/admin/gallery-files", { credentials: "include" });
+      if (cancelled) return;
+      if (res.status === 401) {
+        router.replace("/admin/login");
+        return;
+      }
+      const p = await parseResponseJson<{ files?: string[] }>(res);
+      if (cancelled) return;
+      if (!p.ok || p.parseError || !p.body) {
+        setGalleryFiles([]);
+        setGalleryLoading(false);
+        return;
+      }
+      setGalleryFiles(Array.isArray(p.body.files) ? p.body.files : []);
+      setGalleryLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   const refreshUploadTree = useCallback(async () => {
     const res = await fetch("/api/admin/uploads/tree", { credentials: "include" });
@@ -177,112 +183,6 @@ export function AdminRutinasPanel() {
   useEffect(() => {
     void refreshUploadTree();
   }, [refreshUploadTree]);
-
-  /**
-   * Recibe el FileList de un `<input type="file" webkitdirectory>`,
-   * agrupa por subcarpeta de primer nivel y sube cada subcarpeta al server.
-   *
-   * - Si un archivo está en la raíz seleccionada (sin subcarpeta), se asigna
-   *   a la carpeta lógica `general`.
-   * - Si está en una subcarpeta cuyo nombre coincide con un slug de
-   *   `routine-categories` (`biceps`, `piernas`, …) se categoriza
-   *   automáticamente al elegirlo en una rutina.
-   */
-  async function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
-    const fl = e.target.files;
-    if (!fl || fl.length === 0) {
-      return;
-    }
-    const buckets = new Map<string, File[]>();
-    for (const f of Array.from(fl)) {
-      if (!ALLOWED_UPLOAD_EXT.test(f.name)) continue;
-      const rel =
-        (f as File & { webkitRelativePath?: string }).webkitRelativePath ?? "";
-      const parts = rel.split("/").filter(Boolean);
-      let folder: string;
-      if (parts.length >= 3) {
-        folder = parts[parts.length - 2]!;
-      } else if (parts.length === 2) {
-        folder = "general";
-      } else {
-        continue;
-      }
-      const key = folder.toLowerCase();
-      const list = buckets.get(key) ?? [];
-      list.push(f);
-      buckets.set(key, list);
-    }
-
-    e.target.value = "";
-
-    if (buckets.size === 0) {
-      toast(
-        "No hay archivos válidos en la carpeta seleccionada (.gif/.jpg/.png/.webp).",
-        "error",
-      );
-      return;
-    }
-
-    setUploadingFolders(true);
-    let totalWritten = 0;
-    let totalSkipped = 0;
-    try {
-      for (const [folder, files] of buckets) {
-        const total = files.length;
-        for (let i = 0; i < files.length; i += UPLOAD_CHUNK_SIZE) {
-          const slice = files.slice(i, i + UPLOAD_CHUNK_SIZE);
-          setUploadStatus(
-            `Subiendo "${folder}" (${Math.min(i + slice.length, total)}/${total})…`,
-          );
-          const fd = new FormData();
-          fd.append("folder", folder);
-          for (const f of slice) fd.append("files", f, f.name);
-          const res = await fetch("/api/admin/uploads", {
-            method: "POST",
-            credentials: "include",
-            body: fd,
-          });
-          if (res.status === 401) {
-            router.replace("/admin/login");
-            return;
-          }
-          const p = await parseResponseJson<{
-            written?: { name: string; url: string }[];
-            skipped?: { name: string; reason: string }[];
-            error?: string;
-          }>(res);
-          if (p.parseError) {
-            toast(p.parseError, "error");
-            return;
-          }
-          if (!p.ok || !p.body) {
-            toast(p.body?.error ?? `Error subiendo "${folder}"`, "error");
-            return;
-          }
-          totalWritten += p.body.written?.length ?? 0;
-          totalSkipped += p.body.skipped?.length ?? 0;
-        }
-      }
-      await refreshUploadTree();
-      toast(
-        totalSkipped === 0
-          ? `Subidos ${totalWritten} archivo(s) en ${buckets.size} carpeta(s).`
-          : `Subidos ${totalWritten}; ${totalSkipped} omitido(s) por nombre o tamaño.`,
-        totalSkipped === 0 ? "success" : "info",
-      );
-    } finally {
-      setUploadingFolders(false);
-      setUploadStatus(null);
-    }
-  }
-
-  function pickUploadAsset(folder: string, url: string) {
-    setGifUrl(url);
-    setIllustrationChoice("manual");
-    if (isRoutineCategoryId(folder)) {
-      setCategoryForm(folder);
-    }
-  }
 
   function resetForm() {
     setName("");
@@ -448,8 +348,149 @@ export function AdminRutinasPanel() {
     setIllustrationChoice("manual");
   }
 
+  async function onPickRoutineMedia(file: File | null) {
+    if (!file) return;
+    setUploadingMedia(true);
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await fetch("/api/admin/routines/upload", {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      const p = await parseResponseJson<{ gifUrl?: string; error?: string }>(res);
+      if (p.parseError) {
+        toast(p.parseError, "error");
+        return;
+      }
+      if (!p.ok || !p.body?.gifUrl) {
+        toast(p.body?.error ?? "No se pudo subir la ilustración.", "error");
+        return;
+      }
+      setGifUrl(p.body.gifUrl);
+      setIllustrationChoice("manual");
+      toast("Ilustración subida y asignada a la rutina.", "success");
+    } catch {
+      toast("Error de red al subir la ilustración.", "error");
+    } finally {
+      setUploadingMedia(false);
+    }
+  }
+
+  /**
+   * Recibe el FileList de un `<input type="file" webkitdirectory>`,
+   * agrupa por subcarpeta de primer nivel y sube cada subcarpeta al server.
+   *
+   * - Si un archivo está en la raíz seleccionada (sin subcarpeta), se asigna
+   *   a la carpeta lógica `general`.
+   * - Si está en una subcarpeta cuyo nombre coincide con un slug de
+   *   `routine-categories` (`biceps`, `piernas`, …) se categoriza
+   *   automáticamente al elegirlo en una rutina.
+   */
+  async function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const fl = e.target.files;
+    if (!fl || fl.length === 0) {
+      return;
+    }
+    const buckets = new Map<string, File[]>();
+    for (const f of Array.from(fl)) {
+      if (!ALLOWED_UPLOAD_EXT.test(f.name)) continue;
+      const rel =
+        (f as File & { webkitRelativePath?: string }).webkitRelativePath ?? "";
+      const parts = rel.split("/").filter(Boolean);
+      let folder: string;
+      if (parts.length >= 3) {
+        folder = parts[parts.length - 2]!;
+      } else if (parts.length === 2) {
+        folder = "general";
+      } else {
+        continue;
+      }
+      const key = folder.toLowerCase();
+      const list = buckets.get(key) ?? [];
+      list.push(f);
+      buckets.set(key, list);
+    }
+
+    e.target.value = "";
+
+    if (buckets.size === 0) {
+      toast(
+        "No hay archivos válidos en la carpeta seleccionada (.gif/.jpg/.png/.webp).",
+        "error",
+      );
+      return;
+    }
+
+    setUploadingFolders(true);
+    let totalWritten = 0;
+    let totalSkipped = 0;
+    try {
+      for (const [folder, files] of buckets) {
+        const total = files.length;
+        for (let i = 0; i < files.length; i += UPLOAD_CHUNK_SIZE) {
+          const slice = files.slice(i, i + UPLOAD_CHUNK_SIZE);
+          setUploadStatus(
+            `Subiendo "${folder}" (${Math.min(i + slice.length, total)}/${total})…`,
+          );
+          const fd = new FormData();
+          fd.append("folder", folder);
+          for (const f of slice) fd.append("files", f, f.name);
+          const res = await fetch("/api/admin/uploads", {
+            method: "POST",
+            credentials: "include",
+            body: fd,
+          });
+          if (res.status === 401) {
+            router.replace("/admin/login");
+            return;
+          }
+          const p = await parseResponseJson<{
+            written?: { name: string; url: string }[];
+            skipped?: { name: string; reason: string }[];
+            error?: string;
+          }>(res);
+          if (p.parseError) {
+            toast(p.parseError, "error");
+            return;
+          }
+          if (!p.ok || !p.body) {
+            toast(p.body?.error ?? `Error subiendo "${folder}"`, "error");
+            return;
+          }
+          totalWritten += p.body.written?.length ?? 0;
+          totalSkipped += p.body.skipped?.length ?? 0;
+        }
+      }
+      await refreshUploadTree();
+      toast(
+        totalSkipped === 0
+          ? `Subidos ${totalWritten} archivo(s) en ${buckets.size} carpeta(s).`
+          : `Subidos ${totalWritten}; ${totalSkipped} omitido(s) por nombre o tamaño.`,
+        totalSkipped === 0 ? "success" : "info",
+      );
+    } finally {
+      setUploadingFolders(false);
+      setUploadStatus(null);
+    }
+  }
+
+  function pickUploadAsset(folder: string, url: string) {
+    setGifUrl(url);
+    setIllustrationChoice("manual");
+    if (isRoutineCategoryId(folder)) {
+      setCategoryForm(folder);
+    }
+  }
+
   const previewUrl = gifUrl.trim();
   const saveBlocked = Boolean(setupHint);
+  const availableGalleryNames = new Set(galleryFiles);
+  const visibleGalleryAssets = ROUTINE_GALLERY_ASSETS.filter((asset) => {
+    const name = asset.path.split("/").pop();
+    return Boolean(name && availableGalleryNames.has(name));
+  });
 
   return (
     <div className="min-w-0 space-y-8">
@@ -571,32 +612,37 @@ export function AdminRutinasPanel() {
           ) : null}
 
           <div className="sm:col-span-2">
-            {missingGalleryOnDisk.length > 0 ? (
-              <div className="mb-3 rounded-xl border border-amber-300/80 bg-amber-50/90 px-3 py-2.5 text-sm text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100">
-                <p className="font-medium">Algunas ilustraciones no están en el disco del servidor</p>
-                <p className="mt-1 text-xs leading-relaxed opacity-95">
-                  Faltan en <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">public/images/routines/gallery/</code>
-                  {missingGalleryOnDisk.length > 6 ? " (entre otras): " : ": "}
-                  <span className="font-mono break-all text-[11px]">
-                    {missingGalleryOnDisk.slice(0, 8).join(", ")}
-                    {missingGalleryOnDisk.length > 8 ? "…" : ""}
-                  </span>
-                </p>
-                <p className="mt-1.5 text-xs leading-relaxed">
-                  Copia los archivos a <code className="rounded bg-black/5 px-1">public/images/routines/gallery/</code>, usa{" "}
-                  <code className="rounded bg-black/5 px-1">./scripts/install-routine-gallery-from-mappings.mjs</code> o{" "}
-                  <code className="rounded bg-black/5 px-1">./scripts/copy-gallery-nuevos.sh</code>; luego{" "}
-                  <button
-                    type="button"
-                    onClick={() => void refreshGalleryFiles()}
-                    className="font-medium text-amber-900 underline dark:text-amber-200"
-                  >
-                    volver a comprobar
-                  </button>
-                  .
-                </p>
-              </div>
-            ) : null}
+            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+              Subir ilustración propia (admin)
+            </p>
+            <p className="mt-0.5 text-xs text-zinc-500">
+              Acepta GIF, JPG, PNG o WebP (máx. 12 MB). Se asigna automáticamente al campo de ilustración.
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                ref={routineFileInputRef}
+                type="file"
+                accept="image/gif,image/jpeg,image/png,image/webp"
+                className="sr-only"
+                tabIndex={-1}
+                disabled={saving || aiBusy || saveBlocked || uploadingMedia}
+                onChange={(e) => void onPickRoutineMedia(e.target.files?.[0] ?? null)}
+              />
+              <button
+                type="button"
+                disabled={saving || aiBusy || saveBlocked || uploadingMedia}
+                onClick={() => routineFileInputRef.current?.click()}
+                className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              >
+                {uploadingMedia ? "Subiendo…" : "Subir archivo"}
+              </button>
+              {gifUrl.trim() ? (
+                <span className="text-xs text-zinc-500">Asignado: {gifUrl.trim()}</span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="sm:col-span-2">
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
               Galería de ilustraciones (una por fila)
             </p>
@@ -604,9 +650,14 @@ export function AdminRutinasPanel() {
               Archivos incluidos en la app. Pulsa una fila para asignarla (si tenías IA, cambia a galería del
               sistema).
             </p>
+            {!galleryLoading && visibleGalleryAssets.length === 0 ? (
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                No hay archivos en <code>/images/routines/gallery</code> en este servidor.
+              </p>
+            ) : null}
             <div className="mt-2 max-h-[min(70vh,560px)] overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-600">
               <ul className="divide-y divide-zinc-200 dark:divide-zinc-700">
-                {ROUTINE_GALLERY_ASSETS.map((p) => {
+                {visibleGalleryAssets.map((p) => {
                   const selected = gifUrl.trim() === p.path;
                   return (
                     <li key={p.id}>
@@ -620,24 +671,14 @@ export function AdminRutinasPanel() {
                             : "hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
                         }`}
                       >
-                        <div className="relative flex h-20 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-600 dark:bg-zinc-800">
-                          {thumbLoadFailed[p.id] ? (
-                            <span className="px-1 text-center text-[9px] leading-tight text-zinc-500">
-                              Archivo
-                              <br />
-                              no encontrado
-                            </span>
-                          ) : (
-                            <img
-                              src={p.path}
-                              alt=""
-                              className="max-h-full max-w-full object-contain"
-                              loading="lazy"
-                              onError={() => {
-                                setThumbLoadFailed((prev) => ({ ...prev, [p.id]: true }));
-                              }}
-                            />
-                          )}
+                        <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-800">
+                          <img
+                            src={p.path}
+                            alt=""
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            onError={withRoutineFallback}
+                          />
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{p.label}</p>
@@ -751,6 +792,7 @@ export function AdminRutinasPanel() {
                                     alt=""
                                     loading="lazy"
                                     className="h-full w-full object-cover"
+                                    onError={withRoutineFallback}
                                   />
                                   {selected ? (
                                     <span className="absolute right-1 top-1 rounded bg-emerald-600 px-1 text-[10px] font-medium text-white">
@@ -782,6 +824,7 @@ export function AdminRutinasPanel() {
                 src={previewUrl}
                 alt="Vista previa de la rutina"
                 className="h-full w-full object-contain"
+                onError={withRoutineFallback}
               />
             </div>
           </div>
@@ -852,6 +895,7 @@ export function AdminRutinasPanel() {
                           alt={r.name}
                           className="h-full w-full object-cover"
                           title={r.gifUrl}
+                          onError={withRoutineFallback}
                         />
                       </div>
                     </td>
