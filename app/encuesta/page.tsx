@@ -1,13 +1,48 @@
 import { Suspense } from "react";
+import { cookies } from "next/headers";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
 import { SurveyForm } from "@/components/SurveyForm";
 import { SurveyFormSkeleton } from "@/components/SurveyFormSkeleton";
 import { getPublicQuestionnaire } from "@/lib/public-questionnaire";
+import {
+  SURVEY_DONE_COOKIE,
+  verifySurveyDoneToken,
+} from "@/lib/survey-cookie";
+import { createSurveyFormToken } from "@/lib/survey-form-token";
 import Link from "next/link";
 
+function SurveyAlreadyDone() {
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-8 text-center dark:border-emerald-900 dark:bg-emerald-950/40">
+      <p className="text-lg font-medium text-emerald-900 dark:text-emerald-100">
+        Ya respondiste la encuesta desde este dispositivo
+      </p>
+      <p className="mt-3 text-sm text-emerald-800/90 dark:text-emerald-200/85">
+        Gracias por tu opinión. Para mantener resultados representativos, cada
+        persona puede enviar la encuesta una sola vez por mes.
+      </p>
+      <p className="mt-4 text-xs text-emerald-900/70 dark:text-emerald-200/60">
+        Si no fuiste tú quien respondió, vuelve a intentarlo más tarde.
+      </p>
+    </div>
+  );
+}
+
 async function SurveyWithData() {
+  const cookieStore = await cookies();
+  const doneCookie = cookieStore.get(SURVEY_DONE_COOKIE)?.value;
+  if (verifySurveyDoneToken(doneCookie)) {
+    return <SurveyAlreadyDone />;
+  }
+
   const questionnaire = await getPublicQuestionnaire();
-  return <SurveyForm initialQuestionnaire={questionnaire} />;
+  const formToken = createSurveyFormToken();
+  return (
+    <SurveyForm
+      initialQuestionnaire={questionnaire}
+      formToken={formToken}
+    />
+  );
 }
 
 export default function EncuestaPage() {

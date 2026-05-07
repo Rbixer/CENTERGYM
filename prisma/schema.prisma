@@ -41,6 +41,10 @@ model Submission {
   trainerRating  Int?
   /// Comentario libre del alumno sobre el entrenador / turno
   trainerComment String?
+  /// UUID generado en el cliente para idempotencia: si llega el mismo `requestId` dos veces (doble click, reintento), se devuelve el mismo Submission en vez de duplicar.
+  requestId      String?      @unique
+  /// Hash HMAC truncado de la IP del cliente (no es la IP cruda). Solo para auditoría/anti‑abuso, nunca se devuelve al cliente.
+  ipHash         String?
   answers        Answer[]
 }
 

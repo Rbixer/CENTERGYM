@@ -1,8 +1,21 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  attachSurveyDoneCookie,
+  createSurveyDoneToken,
+  SURVEY_DONE_COOKIE,
+  verifySurveyDoneToken,
+} from "@/lib/survey-cookie";
+import { verifySurveyFormToken } from "@/lib/survey-form-token";
+import {
+  checkSurveyRateLimit,
+  getClientIp,
+  hashIpForStorage,
+} from "@/lib/survey-rate-limit";
 
 const MAX_TRAINER_COMMENT = 2000;
+const MAX_REQUEST_ID = 80;
 
 type Body = {
   trainerGroupId?: string;
@@ -10,7 +23,24 @@ type Body = {
   /** Algunos clientes envían el número como cadena. */
   trainerRating?: number | string;
   trainerComment?: string;
+  /** UUID generado por el cliente para idempotencia. */
+  requestId?: string;
+  /** Token firmado emitido al renderizar /encuesta. */
+  formToken?: string;
+  /** Honeypot: si viene con valor → bot, descartamos silenciosamente. */
+  hpUrl?: string;
 };
+
+/**
+ * Respuesta "neutra" para bots: parece OK pero no guarda nada. Así no avisamos
+ * al atacante que detectamos el honeypot.
+ */
+function fakeAcceptedResponse() {
+  return NextResponse.json({
+    id: "ok",
+    submittedAt: new Date().toISOString(),
+  });
+}
 
 export async function POST(req: Request) {
   let body: Body;
@@ -20,6 +50,73 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 });
   }
 
+  // 1. Honeypot: campo invisible que humanos nunca rellenan.
+  if (typeof body.hpUrl === "string" && body.hpUrl.trim() !== "") {
+    return fakeAcceptedResponse();
+  }
+
+  // 2. Cookie "ya enviaste": disuasor por dispositivo (no infalible, pero corta
+  //    el caso "doy click 50 veces seguidas en mi propio móvil/PC").
+  const cookieHeader = req.headers.get("cookie") ?? "";
+  const surveyDoneRaw = cookieHeader
+    .split(";")
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${SURVEY_DONE_COOKIE}=`))
+    ?.split("=")
+    .slice(1)
+    .join("=");
+  if (verifySurveyDoneToken(surveyDoneRaw)) {
+    return NextResponse.json(
+      {
+        error:
+          "Ya enviaste la encuesta desde este dispositivo. Inténtalo de nuevo más tarde.",
+      },
+      { status: 409 },
+    );
+  }
+
+  // 3. Form token: rechaza POST directos sin haber abierto la página, envíos
+  //    sospechosamente rápidos (< 2s) o con token expirado (> 6h).
+  const tokenCheck = verifySurveyFormToken(body.formToken);
+  if (!tokenCheck.ok) {
+    if (tokenCheck.reason === "too_fast") {
+      // muy probablemente bot → respuesta neutra
+      return fakeAcceptedResponse();
+    }
+    if (tokenCheck.reason === "expired") {
+      return NextResponse.json(
+        {
+          error:
+            "La sesión de la encuesta caducó. Recarga la página e intenta de nuevo.",
+        },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Solicitud no válida. Recarga la página e intenta de nuevo." },
+      { status: 400 },
+    );
+  }
+
+  // 4. Rate-limit por IP (5 / 10 min y 30 / día).
+  const ip = getClientIp(req);
+  const rl = checkSurveyRateLimit(ip);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          rl.reason === "short"
+            ? "Has enviado varias encuestas en poco tiempo desde esta red. Espera unos minutos."
+            : "Se alcanzó el máximo de envíos diarios desde esta red. Inténtalo mañana.",
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rl.retryAfterSec) },
+      },
+    );
+  }
+
+  // 5. Validación de campos del formulario (igual que antes).
   const trainerGroupId = body.trainerGroupId?.trim();
   if (!trainerGroupId) {
     return NextResponse.json(
@@ -109,6 +206,32 @@ export async function POST(req: Request) {
     trainerComment = trimmed.length > 0 ? trimmed : null;
   }
 
+  // 6. Idempotencia: si ya existe un Submission con este `requestId`, devolvemos
+  //    el mismo. Resuelve doble-click, reintentos por red flaky, etc.
+  let requestId: string | null = null;
+  if (typeof body.requestId === "string") {
+    const trimmed = body.requestId.trim();
+    if (trimmed.length > 0 && trimmed.length <= MAX_REQUEST_ID) {
+      requestId = trimmed;
+    }
+  }
+
+  if (requestId) {
+    const existing = await prisma.submission.findUnique({
+      where: { requestId },
+      select: { id: true, submittedAt: true },
+    });
+    if (existing) {
+      const res = NextResponse.json({
+        id: existing.id,
+        submittedAt: existing.submittedAt.toISOString(),
+      });
+      attachSurveyDoneCookie(res, createSurveyDoneToken());
+      return res;
+    }
+  }
+
+  const ipHash = hashIpForStorage(ip);
   const submittedAt = new Date();
 
   try {
@@ -118,6 +241,8 @@ export async function POST(req: Request) {
         submittedAt,
         trainerRating,
         trainerComment,
+        requestId,
+        ipHash,
         answers: {
           create: questions.map((q) => ({
             questionId: q.id,
@@ -127,14 +252,31 @@ export async function POST(req: Request) {
       },
     });
 
-    return NextResponse.json({
+    const res = NextResponse.json({
       id: submission.id,
       submittedAt: submission.submittedAt.toISOString(),
     });
+    attachSurveyDoneCookie(res, createSurveyDoneToken());
+    return res;
   } catch (err) {
     console.error("[submit]", err);
 
     if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      // P2002: requestId duplicado por carrera → idempotencia (devolvemos el original).
+      if (err.code === "P2002" && requestId) {
+        const existing = await prisma.submission.findUnique({
+          where: { requestId },
+          select: { id: true, submittedAt: true },
+        });
+        if (existing) {
+          const res = NextResponse.json({
+            id: existing.id,
+            submittedAt: existing.submittedAt.toISOString(),
+          });
+          attachSurveyDoneCookie(res, createSurveyDoneToken());
+          return res;
+        }
+      }
       if (err.code === "P2003") {
         return NextResponse.json(
           {
@@ -152,10 +294,13 @@ export async function POST(req: Request) {
     if (err instanceof Prisma.PrismaClientValidationError) {
       if (
         msg.includes("Unknown argument") &&
-        (msg.includes("trainerRating") || msg.includes("trainerComment"))
+        (msg.includes("trainerRating") ||
+          msg.includes("trainerComment") ||
+          msg.includes("requestId") ||
+          msg.includes("ipHash"))
       ) {
         msg =
-          "El servidor sigue usando un cliente Prisma antiguo (no reconoce la valoración). Detén por completo `npm run dev`, ejecuta `npx prisma generate` y `npx prisma db push`, y vuelve a arrancar.";
+          "El servidor sigue usando un cliente Prisma antiguo. Detén `npm run start`, ejecuta `npx prisma generate` y `npx prisma db push`, y vuelve a arrancar.";
       }
     }
 

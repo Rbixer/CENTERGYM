@@ -19,9 +19,18 @@ type Questionnaire = {
 type Props = {
   /** Si viene de la página (RSC), evita un fetch extra y compila menos en `next dev`. */
   initialQuestionnaire?: Questionnaire;
+  /** Token firmado emitido por el server al renderizar /encuesta (anti-bot). */
+  formToken?: string;
 };
 
-export function SurveyForm({ initialQuestionnaire }: Props) {
+function generateRequestId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+export function SurveyForm({ initialQuestionnaire, formToken }: Props) {
   const hydrateFromServer = initialQuestionnaire != null;
 
   const [trainers, setTrainers] = useState<PublicTrainer[]>(
@@ -34,10 +43,16 @@ export function SurveyForm({ initialQuestionnaire }: Props) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [trainerRating, setTrainerRating] = useState<number | null>(null);
   const [trainerComment, setTrainerComment] = useState("");
+  // Honeypot: campo invisible que los humanos no rellenan.
+  const [hpUrl, setHpUrl] = useState("");
+  // Mismo `requestId` durante toda la vida del componente: si el usuario hace
+  // doble click o reenvía por error, el server devuelve el envío previo.
+  const [requestId] = useState<string>(() => generateRequestId());
   const [loading, setLoading] = useState(!hydrateFromServer);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ submittedAt: string } | null>(null);
+  const [alreadyDone, setAlreadyDone] = useState(false);
 
   useEffect(() => {
     if (hydrateFromServer) return;
@@ -103,6 +118,9 @@ export function SurveyForm({ initialQuestionnaire }: Props) {
           answers,
           trainerRating,
           trainerComment: trainerComment.trim() || undefined,
+          requestId,
+          formToken,
+          hpUrl,
         }),
       });
       const raw = await res.text();
@@ -118,6 +136,17 @@ export function SurveyForm({ initialQuestionnaire }: Props) {
           );
           return;
         }
+      }
+      if (res.status === 409) {
+        setAlreadyDone(true);
+        return;
+      }
+      if (res.status === 429) {
+        setError(
+          j.error ??
+            "Has enviado varias encuestas seguidas desde esta red. Intenta de nuevo más tarde.",
+        );
+        return;
       }
       if (!res.ok) {
         setError(j.error ?? `No se pudo enviar (${res.status}).`);
@@ -140,6 +169,20 @@ export function SurveyForm({ initialQuestionnaire }: Props) {
       <p className="flex min-h-[44px] items-center justify-center text-center text-base text-zinc-500 dark:text-zinc-400">
         Cargando…
       </p>
+    );
+  }
+
+  if (alreadyDone) {
+    return (
+      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-8 text-center dark:border-emerald-900 dark:bg-emerald-950/40">
+        <p className="text-lg font-medium text-emerald-900 dark:text-emerald-100">
+          Ya respondiste la encuesta desde este dispositivo
+        </p>
+        <p className="mt-3 text-sm text-emerald-800/90 dark:text-emerald-200/85">
+          Gracias por tu opinión. Para mantener resultados representativos, cada
+          persona puede enviar la encuesta una sola vez por mes.
+        </p>
+      </div>
     );
   }
 
@@ -175,6 +218,31 @@ export function SurveyForm({ initialQuestionnaire }: Props) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-8">
+      {/* Honeypot anti-bot: invisible para humanos (off-screen + aria-hidden + tabIndex=-1).
+          Si llega con valor, el endpoint trata el envío como spam y lo descarta. */}
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: "-9999px",
+          top: "auto",
+          width: 1,
+          height: 1,
+          overflow: "hidden",
+        }}
+      >
+        <label>
+          Sitio web (no rellenar)
+          <input
+            type="text"
+            name="website"
+            value={hpUrl}
+            onChange={(e) => setHpUrl(e.target.value)}
+            tabIndex={-1}
+            autoComplete="off"
+          />
+        </label>
+      </div>
       <div>
         <label className="block text-sm font-medium text-foreground">
           Turno / Entrenador <span className="text-red-600">*</span>
