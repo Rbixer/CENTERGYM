@@ -1,0 +1,24 @@
+[Unit]
+Description=GYM CENTER (Next.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/gymcenter_app
+Environment=NODE_ENV=production
+# Crea /var/www/gymcenter_app/.env en el servidor (ver deploy/README.md).
+EnvironmentFile=-/var/www/gymcenter_app/.env
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=8
+# Límite de archivos abiertos (SQLite + muchas conexiones cortas)
+LimitNOFILE=65535
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

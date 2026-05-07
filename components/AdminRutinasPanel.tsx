@@ -14,6 +14,7 @@ import {
   ROUTINE_CATEGORIES,
   type RoutineCategoryId,
   DEFAULT_ROUTINE_CATEGORY,
+  isRoutineCategoryId,
   normalizeRoutineCategory,
   routineCategoryLabel,
 } from "@/lib/routine-categories";
@@ -29,6 +30,24 @@ type Routine = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Una subcarpeta en `public/images/routines/uploads/` con sus GIFs. */
+type UploadFolderEntry = {
+  folder: string;
+  category: RoutineCategoryId;
+  matchesCategory: boolean;
+  files: { name: string; url: string }[];
+};
+
+/** Atributos no tipados por React para `<input>` de selección de carpeta. */
+const FOLDER_INPUT_ATTRS = {
+  webkitdirectory: "",
+  directory: "",
+} as unknown as Record<string, string>;
+
+/** Tamaño de lote para enviar al server (límite duro del endpoint: 80). */
+const UPLOAD_CHUNK_SIZE = 30;
+const ALLOWED_UPLOAD_EXT = /\.(gif|jpe?g|png|webp)$/i;
 
 export function AdminRutinasPanel() {
   const router = useRouter();
@@ -49,6 +68,10 @@ export function AdminRutinasPanel() {
   const [categoryForm, setCategoryForm] = useState<RoutineCategoryId>(DEFAULT_ROUTINE_CATEGORY);
   const [galleryFilesOnDisk, setGalleryFilesOnDisk] = useState<string[] | null>(null);
   const [thumbLoadFailed, setThumbLoadFailed] = useState<Record<string, boolean>>({});
+  const [uploadTree, setUploadTree] = useState<UploadFolderEntry[] | null>(null);
+  /** Mensaje de progreso mientras se sube una carpeta seleccionada. */
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [uploadingFolders, setUploadingFolders] = useState(false);
 
   const missingGalleryOnDisk = useMemo(() => {
     if (galleryFilesOnDisk === null) return [];
@@ -136,6 +159,130 @@ export function AdminRutinasPanel() {
   useEffect(() => {
     void refreshGalleryFiles();
   }, [refreshGalleryFiles]);
+
+  const refreshUploadTree = useCallback(async () => {
+    const res = await fetch("/api/admin/uploads/tree", { credentials: "include" });
+    if (res.status === 401) {
+      setUploadTree([]);
+      return;
+    }
+    const p = await parseResponseJson<{ tree?: UploadFolderEntry[] }>(res);
+    if (!p.ok || p.parseError || !p.body) {
+      setUploadTree([]);
+      return;
+    }
+    setUploadTree(Array.isArray(p.body.tree) ? p.body.tree : []);
+  }, []);
+
+  useEffect(() => {
+    void refreshUploadTree();
+  }, [refreshUploadTree]);
+
+  /**
+   * Recibe el FileList de un `<input type="file" webkitdirectory>`,
+   * agrupa por subcarpeta de primer nivel y sube cada subcarpeta al server.
+   *
+   * - Si un archivo está en la raíz seleccionada (sin subcarpeta), se asigna
+   *   a la carpeta lógica `general`.
+   * - Si está en una subcarpeta cuyo nombre coincide con un slug de
+   *   `routine-categories` (`biceps`, `piernas`, …) se categoriza
+   *   automáticamente al elegirlo en una rutina.
+   */
+  async function handleFolderSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const fl = e.target.files;
+    if (!fl || fl.length === 0) {
+      return;
+    }
+    const buckets = new Map<string, File[]>();
+    for (const f of Array.from(fl)) {
+      if (!ALLOWED_UPLOAD_EXT.test(f.name)) continue;
+      const rel =
+        (f as File & { webkitRelativePath?: string }).webkitRelativePath ?? "";
+      const parts = rel.split("/").filter(Boolean);
+      let folder: string;
+      if (parts.length >= 3) {
+        folder = parts[parts.length - 2]!;
+      } else if (parts.length === 2) {
+        folder = "general";
+      } else {
+        continue;
+      }
+      const key = folder.toLowerCase();
+      const list = buckets.get(key) ?? [];
+      list.push(f);
+      buckets.set(key, list);
+    }
+
+    e.target.value = "";
+
+    if (buckets.size === 0) {
+      toast(
+        "No hay archivos válidos en la carpeta seleccionada (.gif/.jpg/.png/.webp).",
+        "error",
+      );
+      return;
+    }
+
+    setUploadingFolders(true);
+    let totalWritten = 0;
+    let totalSkipped = 0;
+    try {
+      for (const [folder, files] of buckets) {
+        const total = files.length;
+        for (let i = 0; i < files.length; i += UPLOAD_CHUNK_SIZE) {
+          const slice = files.slice(i, i + UPLOAD_CHUNK_SIZE);
+          setUploadStatus(
+            `Subiendo "${folder}" (${Math.min(i + slice.length, total)}/${total})…`,
+          );
+          const fd = new FormData();
+          fd.append("folder", folder);
+          for (const f of slice) fd.append("files", f, f.name);
+          const res = await fetch("/api/admin/uploads", {
+            method: "POST",
+            credentials: "include",
+            body: fd,
+          });
+          if (res.status === 401) {
+            router.replace("/admin/login");
+            return;
+          }
+          const p = await parseResponseJson<{
+            written?: { name: string; url: string }[];
+            skipped?: { name: string; reason: string }[];
+            error?: string;
+          }>(res);
+          if (p.parseError) {
+            toast(p.parseError, "error");
+            return;
+          }
+          if (!p.ok || !p.body) {
+            toast(p.body?.error ?? `Error subiendo "${folder}"`, "error");
+            return;
+          }
+          totalWritten += p.body.written?.length ?? 0;
+          totalSkipped += p.body.skipped?.length ?? 0;
+        }
+      }
+      await refreshUploadTree();
+      toast(
+        totalSkipped === 0
+          ? `Subidos ${totalWritten} archivo(s) en ${buckets.size} carpeta(s).`
+          : `Subidos ${totalWritten}; ${totalSkipped} omitido(s) por nombre o tamaño.`,
+        totalSkipped === 0 ? "success" : "info",
+      );
+    } finally {
+      setUploadingFolders(false);
+      setUploadStatus(null);
+    }
+  }
+
+  function pickUploadAsset(folder: string, url: string) {
+    setGifUrl(url);
+    setIllustrationChoice("manual");
+    if (isRoutineCategoryId(folder)) {
+      setCategoryForm(folder);
+    }
+  }
 
   function resetForm() {
     setName("");
@@ -506,6 +653,123 @@ export function AdminRutinasPanel() {
                   );
                 })}
               </ul>
+            </div>
+
+            <div className="mt-6 rounded-xl border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-700 dark:bg-zinc-800/40">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                    Mis carpetas (subir GIFs en lote)
+                  </p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                    Selecciona una carpeta de tu PC con subcarpetas (ej.{" "}
+                    <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">
+                      biceps/
+                    </code>
+                    ,{" "}
+                    <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">
+                      piernas/
+                    </code>
+                    …). Si el nombre coincide con un tipo de rutina, al elegir un GIF se
+                    asigna esa categoría automáticamente.
+                  </p>
+                </div>
+                <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-50 dark:border-emerald-700 dark:bg-zinc-900 dark:text-emerald-200 dark:hover:bg-emerald-950/40">
+                  <input
+                    type="file"
+                    multiple
+                    accept=".gif,.jpg,.jpeg,.png,.webp,image/gif,image/jpeg,image/png,image/webp"
+                    disabled={uploadingFolders || saveBlocked}
+                    onChange={(e) => {
+                      void handleFolderSelect(e);
+                    }}
+                    className="hidden"
+                    {...FOLDER_INPUT_ATTRS}
+                  />
+                  {uploadingFolders ? "Subiendo…" : "Seleccionar carpeta"}
+                </label>
+              </div>
+              {uploadStatus ? (
+                <p className="mt-2 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                  {uploadStatus}
+                </p>
+              ) : null}
+              {uploadTree === null ? (
+                <p className="mt-3 text-xs text-zinc-500">Cargando carpetas…</p>
+              ) : uploadTree.length === 0 ? (
+                <p className="mt-3 text-xs text-zinc-500">
+                  Aún no has subido ninguna carpeta. Las imágenes se guardarán en{" "}
+                  <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">
+                    public/images/routines/uploads/&lt;subcarpeta&gt;/
+                  </code>
+                  .
+                </p>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {uploadTree.map((entry) => (
+                    <div
+                      key={entry.folder}
+                      className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-900/40"
+                    >
+                      <div className="flex flex-wrap items-baseline gap-2 px-1 pb-2">
+                        <span className="font-mono text-xs font-medium text-zinc-800 dark:text-zinc-100">
+                          {entry.folder}/
+                        </span>
+                        <span className="text-[11px] text-zinc-500">
+                          {entry.files.length} archivo
+                          {entry.files.length === 1 ? "" : "s"}
+                        </span>
+                        {entry.matchesCategory ? (
+                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-200">
+                            categoría: {routineCategoryLabel(entry.category)}
+                          </span>
+                        ) : (
+                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                            categoría sugerida: General
+                          </span>
+                        )}
+                      </div>
+                      <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                        {entry.files.map((f) => {
+                          const selected = gifUrl.trim() === f.url;
+                          return (
+                            <li key={f.url}>
+                              <button
+                                type="button"
+                                disabled={saving || aiBusy || saveBlocked}
+                                onClick={() => pickUploadAsset(entry.folder, f.url)}
+                                title={f.name}
+                                className={`flex w-full flex-col items-stretch gap-1 rounded-lg border p-1 text-left transition disabled:opacity-50 ${
+                                  selected
+                                    ? "border-emerald-500 bg-emerald-50 dark:border-emerald-600 dark:bg-emerald-950/40"
+                                    : "border-zinc-200 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800/60"
+                                }`}
+                              >
+                                <div className="relative aspect-square overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800">
+                                  <img
+                                    src={f.url}
+                                    alt=""
+                                    loading="lazy"
+                                    className="h-full w-full object-cover"
+                                  />
+                                  {selected ? (
+                                    <span className="absolute right-1 top-1 rounded bg-emerald-600 px-1 text-[10px] font-medium text-white">
+                                      ✓
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <span className="truncate font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                                  {f.name}
+                                </span>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
