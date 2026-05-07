@@ -5,13 +5,15 @@ import type { NextResponse } from "next/server";
  * Cookie firmada de "este navegador ya envió la encuesta".
  *
  * - Es solo un disuasor: alguien técnico puede borrar cookies o usar incógnito.
- *   Se combina con el rate-limit por IP para cubrir ambos lados.
+ *   Se combina con el rate-limit por IP y por dispositivo (IP+UA) para
+ *   cubrir los flancos.
  * - Se firma con HMAC-SHA256 usando `ADMIN_SECRET` (mismo patrón que `lib/auth.ts`).
+ * - TTL alineado con la regla del gym: "1 envío por dispositivo cada 15 días".
  */
 
 export const SURVEY_DONE_COOKIE = "encuesta_done";
 
-const SURVEY_DONE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 días
+const SURVEY_DONE_TTL_MS = 15 * 24 * 60 * 60 * 1000; // 15 días
 
 function getSecret(): string {
   const s = process.env.ADMIN_SECRET;

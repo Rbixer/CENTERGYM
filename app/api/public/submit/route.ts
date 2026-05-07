@@ -9,8 +9,10 @@ import {
 } from "@/lib/survey-cookie";
 import { verifySurveyFormToken } from "@/lib/survey-form-token";
 import {
+  checkSurveyDeviceLimit,
   checkSurveyRateLimit,
   getClientIp,
+  getDeviceKey,
   hashIpForStorage,
 } from "@/lib/survey-rate-limit";
 
@@ -98,7 +100,8 @@ export async function POST(req: Request) {
     );
   }
 
-  // 4. Rate-limit por IP (5 / 10 min y 30 / día).
+  // 4a. Rate-limit por IP (5 / 30 min y 30 / día). Frena scripts/inundaciones,
+  //     pero permite que la red Wi-Fi del gym tenga decenas de envíos legítimos.
   const ip = getClientIp(req);
   const rl = checkSurveyRateLimit(ip);
   if (!rl.allowed) {
@@ -112,6 +115,25 @@ export async function POST(req: Request) {
       {
         status: 429,
         headers: { "Retry-After": String(rl.retryAfterSec) },
+      },
+    );
+  }
+
+  // 4b. Rate-limit por dispositivo aproximado (IP + hash User-Agent): máx 2/24h.
+  //     Es la capa que hace cumplir la regla "1 voto cada 15 días" cuando
+  //     alguien borra cookies o abre incógnito en el mismo móvil/PC. Cambiar
+  //     de navegador real (ej. Chrome → Firefox) lo evade, pero sube el coste.
+  const deviceKey = getDeviceKey(req, ip);
+  const devRl = checkSurveyDeviceLimit(deviceKey);
+  if (!devRl.allowed) {
+    return NextResponse.json(
+      {
+        error:
+          "Ya enviaste la encuesta desde este dispositivo recientemente. Inténtalo más tarde.",
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(devRl.retryAfterSec) },
       },
     );
   }

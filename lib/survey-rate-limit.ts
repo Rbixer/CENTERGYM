@@ -16,28 +16,63 @@ type Bucket = {
   timestamps: number[];
 };
 
-// Los límites están pensados para que 1 IP pueda corresponder a una red Wi‑Fi
-// del gym (varios alumnos detrás del mismo NAT) sin bloquear el caso real,
-// pero sí frenar abuso obvio (un script que envía 100/min).
-const SHORT_WINDOW_MS = 10 * 60 * 1000; // 10 min
-const SHORT_LIMIT = 20; // 20 envíos / 10 min por IP
-const LONG_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 h
-const LONG_LIMIT = 100; // 100 envíos / día por IP
-const PURGE_EVERY = 200; // purgar mapa cada N hits
+// Límites por IP: equilibrio entre el caso real (Wi‑Fi del gym con varios
+// alumnos detrás del mismo NAT, todos votando en el mismo día) y frenar
+// inundaciones (script automático).
+//   - corto:  5 envíos / 30 min por IP   (anti-spam inmediato)
+//   - largo: 30 envíos / 24 h  por IP   (techo diario por red completa)
+const IP_SHORT_WINDOW_MS = 30 * 60 * 1000; // 30 min
+const IP_SHORT_LIMIT = 5;
+const IP_LONG_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 h
+const IP_LONG_LIMIT = 30;
 
-const buckets = new Map<string, Bucket>();
+// Límite por dispositivo aproximado (IP + hash del User-Agent). Es la capa
+// que hace cumplir "1 voto cada 15 días" cuando alguien borra cookies o
+// abre incógnito en el mismo móvil/PC: el UA + IP cambia muy poco, así que
+// lo capturamos.
+//   - 2 envíos / 24 h por (IP+UA)
+const DEVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEVICE_LIMIT = 2;
+
+const PURGE_EVERY = 200; // purgar mapas cada N hits
+
+type LimiterConfig = {
+  shortWindowMs: number;
+  shortLimit: number;
+  longWindowMs: number;
+  longLimit: number;
+};
+
+const IP_CONFIG: LimiterConfig = {
+  shortWindowMs: IP_SHORT_WINDOW_MS,
+  shortLimit: IP_SHORT_LIMIT,
+  longWindowMs: IP_LONG_WINDOW_MS,
+  longLimit: IP_LONG_LIMIT,
+};
+
+const DEVICE_CONFIG: LimiterConfig = {
+  shortWindowMs: DEVICE_WINDOW_MS,
+  shortLimit: DEVICE_LIMIT,
+  longWindowMs: DEVICE_WINDOW_MS,
+  longLimit: DEVICE_LIMIT,
+};
+
+const ipBuckets = new Map<string, Bucket>();
+const deviceBuckets = new Map<string, Bucket>();
 let hitsSinceLastPurge = 0;
 
 function purgeIfNeeded(now: number) {
   hitsSinceLastPurge += 1;
   if (hitsSinceLastPurge < PURGE_EVERY) return;
   hitsSinceLastPurge = 0;
-  for (const [key, b] of buckets) {
-    const cutoff = now - LONG_WINDOW_MS;
-    while (b.timestamps.length && b.timestamps[0]! < cutoff) {
-      b.timestamps.shift();
+  for (const map of [ipBuckets, deviceBuckets]) {
+    for (const [key, b] of map) {
+      const cutoff = now - IP_LONG_WINDOW_MS;
+      while (b.timestamps.length && b.timestamps[0]! < cutoff) {
+        b.timestamps.shift();
+      }
+      if (b.timestamps.length === 0) map.delete(key);
     }
-    if (b.timestamps.length === 0) buckets.delete(key);
   }
 }
 
@@ -45,19 +80,17 @@ export type RateLimitResult =
   | { allowed: true; remaining: number; resetAt: number }
   | { allowed: false; retryAfterSec: number; reason: "short" | "long" };
 
-/**
- * Comprueba si la `key` puede enviar una nueva encuesta. Si devuelve `allowed`,
- * registra el hit; si no, no se registra (no penalizamos al que ya está bloqueado).
- */
-export function checkSurveyRateLimit(key: string): RateLimitResult {
-  const now = Date.now();
-  purgeIfNeeded(now);
+function evaluate(
+  map: Map<string, Bucket>,
+  key: string,
+  cfg: LimiterConfig,
+  now: number,
+  registerOnAllow: boolean,
+): RateLimitResult {
+  const bucket = map.get(key) ?? { timestamps: [] };
+  const shortCutoff = now - cfg.shortWindowMs;
+  const longCutoff = now - cfg.longWindowMs;
 
-  const bucket = buckets.get(key) ?? { timestamps: [] };
-  const shortCutoff = now - SHORT_WINDOW_MS;
-  const longCutoff = now - LONG_WINDOW_MS;
-
-  // limpieza local (más barata que recorrer todo el Map)
   while (bucket.timestamps.length && bucket.timestamps[0]! < longCutoff) {
     bucket.timestamps.shift();
   }
@@ -65,31 +98,62 @@ export function checkSurveyRateLimit(key: string): RateLimitResult {
   const shortCount = bucket.timestamps.filter((t) => t >= shortCutoff).length;
   const longCount = bucket.timestamps.length;
 
-  if (shortCount >= SHORT_LIMIT) {
+  if (shortCount >= cfg.shortLimit) {
     const oldestInWindow = bucket.timestamps.find((t) => t >= shortCutoff)!;
-    const retryAfterSec = Math.max(
-      1,
-      Math.ceil((oldestInWindow + SHORT_WINDOW_MS - now) / 1000),
-    );
-    return { allowed: false, retryAfterSec, reason: "short" };
+    return {
+      allowed: false,
+      retryAfterSec: Math.max(
+        1,
+        Math.ceil((oldestInWindow + cfg.shortWindowMs - now) / 1000),
+      ),
+      reason: "short",
+    };
   }
-  if (longCount >= LONG_LIMIT) {
+  if (longCount >= cfg.longLimit) {
     const oldestInWindow = bucket.timestamps[0]!;
-    const retryAfterSec = Math.max(
-      1,
-      Math.ceil((oldestInWindow + LONG_WINDOW_MS - now) / 1000),
-    );
-    return { allowed: false, retryAfterSec, reason: "long" };
+    return {
+      allowed: false,
+      retryAfterSec: Math.max(
+        1,
+        Math.ceil((oldestInWindow + cfg.longWindowMs - now) / 1000),
+      ),
+      reason: "long",
+    };
   }
 
-  bucket.timestamps.push(now);
-  buckets.set(key, bucket);
+  if (registerOnAllow) {
+    bucket.timestamps.push(now);
+    map.set(key, bucket);
+  }
 
   return {
     allowed: true,
-    remaining: SHORT_LIMIT - (shortCount + 1),
-    resetAt: now + SHORT_WINDOW_MS,
+    remaining: cfg.shortLimit - (shortCount + 1),
+    resetAt: now + cfg.shortWindowMs,
   };
+}
+
+/**
+ * Comprueba si la IP puede enviar una nueva encuesta. Si devuelve `allowed`,
+ * registra el hit; si no, no se registra (no penalizamos al ya bloqueado).
+ */
+export function checkSurveyRateLimit(key: string): RateLimitResult {
+  const now = Date.now();
+  purgeIfNeeded(now);
+  return evaluate(ipBuckets, key, IP_CONFIG, now, true);
+}
+
+/**
+ * Comprueba si el dispositivo (IP + hash de UA) puede enviar una nueva
+ * encuesta. Es la capa que hace cumplir "1 voto cada 15 días" frente a quien
+ * borra cookies o abre incógnito en el mismo móvil.
+ *
+ * Solo se debe llamar después de que el limiter por IP haya pasado, porque
+ * registra el hit al permitir el envío.
+ */
+export function checkSurveyDeviceLimit(key: string): RateLimitResult {
+  const now = Date.now();
+  return evaluate(deviceBuckets, key, DEVICE_CONFIG, now, true);
 }
 
 /**
@@ -117,4 +181,22 @@ export function hashIpForStorage(ip: string): string | null {
   const secret = process.env.ADMIN_SECRET;
   if (!secret || secret.length < 16) return null;
   return createHmac("sha256", secret).update(ip).digest("hex").slice(0, 24);
+}
+
+/**
+ * Identidad aproximada del dispositivo: HMAC de `ip|userAgent` truncado.
+ * No es un fingerprint perfecto (cambiar de navegador o modo desktop/mobile
+ * cambia el UA y se evade), pero captura el caso típico del entrenador que
+ * intenta votar varias veces desde el mismo móvil borrando cookies.
+ */
+export function getDeviceKey(req: Request, ip: string): string {
+  const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 256);
+  const secret = process.env.ADMIN_SECRET;
+  // Si por algún motivo no hay secret, caemos a una clave determinística
+  // (no hasheada). Es peor pero sigue separando dispositivos distintos.
+  if (!secret || secret.length < 16) return `${ip}|${ua}`;
+  return createHmac("sha256", secret)
+    .update(`${ip}|${ua}`)
+    .digest("hex")
+    .slice(0, 32);
 }
