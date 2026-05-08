@@ -8,12 +8,12 @@ import type { NextResponse } from "next/server";
  *   Se combina con el rate-limit por IP y por dispositivo (IP+UA) para
  *   cubrir los flancos.
  * - Se firma con HMAC-SHA256 usando `ADMIN_SECRET` (mismo patrón que `lib/auth.ts`).
- * - TTL alineado con la regla del gym: "1 envío por dispositivo cada 15 días".
+ * - TTL alineado con la regla del gym: "1 envío por dispositivo cada 10 días".
  */
 
 export const SURVEY_DONE_COOKIE = "encuesta_done";
 
-const SURVEY_DONE_TTL_MS = 15 * 24 * 60 * 60 * 1000; // 15 días
+const SURVEY_DONE_TTL_MS = 10 * 24 * 60 * 60 * 1000; // 10 días
 
 function getSecret(): string {
   const s = process.env.ADMIN_SECRET;

@@ -120,7 +120,7 @@ export async function POST(req: Request) {
   }
 
   // 4b. Rate-limit por dispositivo aproximado (IP + hash User-Agent): máx 2/24h.
-  //     Es la capa que hace cumplir la regla "1 voto cada 15 días" cuando
+  //     Es la capa que hace cumplir la regla "1 voto cada 10 días" cuando
   //     alguien borra cookies o abre incógnito en el mismo móvil/PC. Cambiar
   //     de navegador real (ej. Chrome → Firefox) lo evade, pero sube el coste.
   const deviceKey = getDeviceKey(req, ip);

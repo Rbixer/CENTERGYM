@@ -27,7 +27,7 @@ const IP_LONG_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 h
 const IP_LONG_LIMIT = 30;
 
 // Límite por dispositivo aproximado (IP + hash del User-Agent). Es la capa
-// que hace cumplir "1 voto cada 15 días" cuando alguien borra cookies o
+// que hace cumplir "1 voto cada 10 días" cuando alguien borra cookies o
 // abre incógnito en el mismo móvil/PC: el UA + IP cambia muy poco, así que
 // lo capturamos.
 //   - 2 envíos / 24 h por (IP+UA)
@@ -145,7 +145,7 @@ export function checkSurveyRateLimit(key: string): RateLimitResult {
 
 /**
  * Comprueba si el dispositivo (IP + hash de UA) puede enviar una nueva
- * encuesta. Es la capa que hace cumplir "1 voto cada 15 días" frente a quien
+ * encuesta. Es la capa que hace cumplir "1 voto cada 10 días" frente a quien
  * borra cookies o abre incógnito en el mismo móvil.
  *
  * Solo se debe llamar después de que el limiter por IP haya pasado, porque
