@@ -1,0 +1,46 @@
+{
+  "id": "/admin",
+  "lang": "es",
+  "dir": "ltr",
+  "name": "GYM CENTER Admin",
+  "short_name": "Admin GYM",
+  "description": "Panel de administración de GYM CENTER: rutinas, encuestas, tienda y stats.",
+  "start_url": "/admin/login",
+  "scope": "/admin/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "portrait-primary",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
+  "icons": [
+    {
+      "src": "/gymcenter-logo.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/gymcenter-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/gymcenter-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/gymcenter-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import { AdminInstallHint } from "@/components/AdminInstallHint";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -93,6 +94,7 @@ export default function AdminLoginPage() {
           {loading ? "Entrando…" : "Entrar"}
         </button>
       </form>
+      <AdminInstallHint />
     </div>
   );
 }
