@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AdminResultsCharts } from "@/components/AdminResultsCharts";
 import { AdminRutinasPanel } from "@/components/AdminRutinasPanel";
+import { AdminWorkoutsPanel } from "@/components/AdminWorkoutsPanel";
 import { AdminVentasTab } from "@/components/AdminVentasTab";
 import { AdminPromosPanel } from "@/components/AdminPromosPanel";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
@@ -241,16 +242,32 @@ export function AdminPanel() {
         {tab === "rutinas" ? (
           <div>
             <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
-              También puedes usar la página dedicada{" "}
+              Crea rutinas con varios ejercicios (multi-selección) en la primera
+              sección. La biblioteca de ejercicios individuales está al final.
+              También disponible en página dedicada{" "}
               <Link
                 href="/admin/rutinas"
                 className="font-medium text-violet-700 underline underline-offset-2 dark:text-violet-400"
               >
                 /admin/rutinas
-              </Link>{" "}
-              (mismo CRUD).
+              </Link>
+              .
             </p>
-            <AdminRutinasPanel />
+            <AdminWorkoutsPanel />
+            <div className="mt-12 border-t border-zinc-200 pt-8 dark:border-zinc-800">
+              <header>
+                <h3 className="text-base font-semibold tracking-tight">
+                  Biblioteca de ejercicios
+                </h3>
+                <p className="mt-1 max-w-2xl text-xs text-zinc-600 dark:text-zinc-400">
+                  Catálogo de movimientos individuales. Son la materia prima
+                  para componer las rutinas de arriba.
+                </p>
+              </header>
+              <div className="mt-4">
+                <AdminRutinasPanel />
+              </div>
+            </div>
           </div>
         ) : null}
       </main>
