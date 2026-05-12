@@ -16,7 +16,7 @@ export function RutinaCategoryPicker() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/rutinas", { cache: "no-store" });
+      const res = await fetch("/api/workouts", { cache: "no-store" });
       const parsed = await parseResponseJson<{ rutinas?: RutinaPublica[]; error?: string }>(
         res,
       );

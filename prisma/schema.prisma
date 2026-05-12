@@ -92,15 +92,61 @@ model SalesOrderLine {
   @@unique([orderId, productId])
 }
 
-/// Rutina de entrenamiento (página pública /rutina, admin /admin/rutinas)
+/// Ejercicio individual de la biblioteca: GIF, nombre, descripción, categoría.
+/// Antes se llamaba "Rutina" en la UI; pasamos a llamarlo "Ejercicio" porque
+/// ahora una RUTINA es una sesión que contiene varios de estos ejercicios
+/// con sus propias series y repeticiones (modelo `Workout` + `WorkoutItem`).
+/// Mantenemos el nombre de tabla `Routine` en la BD para no romper los datos
+/// existentes (~60 filas ya cargadas con sus GIFs).
 model Routine {
-  id          String   @id @default(cuid())
-  name        String
-  description String
-  gifUrl      String
+  id           String         @id @default(cuid())
+  name         String
+  description  String
+  gifUrl       String
   /// Slug de zona/tipo (`lib/routine-categories`): biceps, piernas, etc.
-  category    String   @default("general")
+  category     String         @default("general")
+  sortOrder    Int            @default(0)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  workoutItems WorkoutItem[]
+}
+
+/// Rutina-sesión: agrupa varios ejercicios con sus series y repeticiones.
+/// Ejemplo: "Empuje día 1" → 4-5 ejercicios encadenados con sets/reps cada uno.
+/// Se muestra a los alumnos en /rutina/categoria/<slug>. Sustituye a la
+/// visualización antigua de "Routine sueltas".
+model Workout {
+  id          String        @id @default(cuid())
+  name        String
+  description String        @default("")
+  /// Slug de categoría (`lib/routine-categories`): zona principal o tipo.
+  category    String        @default("general")
+  sortOrder   Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  items       WorkoutItem[]
+}
+
+/// Cada ejercicio dentro de una rutina-sesión, con sets/reps y orden.
+/// Borrar la rutina (Workout) elimina sus ítems; borrar el ejercicio de
+/// biblioteca (Routine) lo bloqueamos con Restrict para no romper las
+/// rutinas que lo referencian.
+model WorkoutItem {
+  id          String   @id @default(cuid())
+  workoutId   String
+  workout     Workout  @relation(fields: [workoutId], references: [id], onDelete: Cascade)
+  exerciseId  String
+  exercise    Routine  @relation(fields: [exerciseId], references: [id], onDelete: Restrict)
+  /// Número de series (ej. 4).
+  sets        Int      @default(3)
+  /// Repeticiones como texto: admite "12", "12-15", "al fallo", "30 seg".
+  reps        String   @default("12")
+  /// Descanso entre series en segundos (opcional, ej. 60, 90).
+  restSec     Int?
+  /// Nota libre por ejercicio dentro de esta rutina (técnica concreta, peso, RIR, etc).
+  notes       String?
   sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+
+  @@index([workoutId])
+  @@index([exerciseId])
 }
