@@ -126,12 +126,16 @@ export function AdminWorkoutsPanel() {
   const [items, setItems] = useState<DraftItem[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Selector de ejercicios (modal inline)
+  // Selector de ejercicios (modal inline). Soporta multiselección: el admin
+  // marca varios checkboxes y pulsa "Añadir N" para incorporarlos de golpe.
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerCategory, setPickerCategory] = useState<RoutineCategoryId | "all">(
     "all",
   );
   const [pickerSearch, setPickerSearch] = useState("");
+  const [pickerSelectedIds, setPickerSelectedIds] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
 
   // Drag & drop: índice del item que se está arrastrando.
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -215,13 +219,43 @@ export function AdminWorkoutsPanel() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function addExerciseToDraft(ex: ExerciseRow) {
-    if (items.length >= MAX_WORKOUT_ITEMS) {
-      toast(`Máximo ${MAX_WORKOUT_ITEMS} ejercicios por rutina.`, "error");
+  function togglePickerSelection(id: string) {
+    setPickerSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addSelectedExercisesToDraft() {
+    if (pickerSelectedIds.size === 0) {
+      toast("Marca al menos un ejercicio.", "error");
       return;
     }
-    setItems((prev) => [...prev, emptyDraftItem(ex)]);
-    setPickerOpen(false);
+    setItems((prev) => {
+      const slotsLeft = MAX_WORKOUT_ITEMS - prev.length;
+      if (slotsLeft <= 0) {
+        toast(`Máximo ${MAX_WORKOUT_ITEMS} ejercicios por rutina.`, "error");
+        return prev;
+      }
+      // Conserva el orden en que aparecen en la biblioteca (categoría/nombre).
+      const ordered = library.filter((ex) => pickerSelectedIds.has(ex.id));
+      const toAdd = ordered.slice(0, slotsLeft).map(emptyDraftItem);
+      if (ordered.length > slotsLeft) {
+        toast(
+          `Se añadieron ${slotsLeft} de ${ordered.length}: máximo ${MAX_WORKOUT_ITEMS} ejercicios por rutina.`,
+          "info",
+        );
+      } else {
+        toast(
+          `${toAdd.length} ejercicio${toAdd.length === 1 ? "" : "s"} añadido${toAdd.length === 1 ? "" : "s"}.`,
+          "success",
+        );
+      }
+      return [...prev, ...toAdd];
+    });
+    setPickerSelectedIds(new Set());
   }
 
   function updateItem(idx: number, patch: Partial<DraftItem>) {
@@ -479,6 +513,51 @@ export function AdminWorkoutsPanel() {
                   ))}
                 </select>
               </div>
+
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs dark:border-emerald-800 dark:bg-emerald-950/40">
+                <span className="font-medium text-emerald-900 dark:text-emerald-100">
+                  {pickerSelectedIds.size === 0
+                    ? "Marca varios ejercicios y pulsa «Añadir»."
+                    : `${pickerSelectedIds.size} marcado${pickerSelectedIds.size === 1 ? "" : "s"}`}
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {filteredLibrary.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const visibleIds = filteredLibrary.map((ex) => ex.id);
+                        const allMarked = visibleIds.every((id) =>
+                          pickerSelectedIds.has(id),
+                        );
+                        setPickerSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (allMarked) {
+                            visibleIds.forEach((id) => next.delete(id));
+                          } else {
+                            visibleIds.forEach((id) => next.add(id));
+                          }
+                          return next;
+                        });
+                      }}
+                      className="rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-zinc-900 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
+                    >
+                      {filteredLibrary.every((ex) => pickerSelectedIds.has(ex.id))
+                        ? "Quitar todos"
+                        : "Marcar todos los visibles"}
+                    </button>
+                  ) : null}
+                  {pickerSelectedIds.size > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setPickerSelectedIds(new Set())}
+                      className="rounded-md border border-zinc-300 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      Limpiar
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
               <div className="mt-3 max-h-72 overflow-y-auto">
                 {filteredLibrary.length === 0 ? (
                   <p className="py-4 text-center text-xs text-zinc-500">
@@ -486,33 +565,70 @@ export function AdminWorkoutsPanel() {
                   </p>
                 ) : (
                   <ul className="divide-y divide-zinc-200 dark:divide-zinc-700">
-                    {filteredLibrary.map((ex) => (
-                      <li key={ex.id}>
-                        <button
-                          type="button"
-                          onClick={() => addExerciseToDraft(ex)}
-                          className="flex w-full items-center gap-3 px-2 py-2 text-left transition hover:bg-emerald-50/40 dark:hover:bg-emerald-950/30"
-                        >
-                          <div className="relative h-12 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
-                            <img
-                              src={ex.gifUrl}
-                              alt=""
-                              loading="lazy"
-                              className="h-full w-full object-contain"
-                              onError={withRoutineFallback}
+                    {filteredLibrary.map((ex) => {
+                      const checked = pickerSelectedIds.has(ex.id);
+                      return (
+                        <li key={ex.id}>
+                          <label
+                            className={`flex w-full cursor-pointer items-center gap-3 px-2 py-2 text-left transition ${
+                              checked
+                                ? "bg-emerald-50/60 dark:bg-emerald-950/30"
+                                : "hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => togglePickerSelection(ex.id)}
+                              className="h-4 w-4 shrink-0 accent-emerald-600"
+                              aria-label={`Seleccionar ${ex.name}`}
                             />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium">{ex.name}</p>
-                            <p className="truncate text-[11px] text-zinc-500">
-                              {routineCategoryLabel(normalizeRoutineCategory(ex.category))}
-                            </p>
-                          </div>
-                        </button>
-                      </li>
-                    ))}
+                            <div className="relative h-12 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
+                              <img
+                                src={ex.gifUrl}
+                                alt=""
+                                loading="lazy"
+                                className="h-full w-full object-contain"
+                                onError={withRoutineFallback}
+                              />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium">{ex.name}</p>
+                              <p className="truncate text-[11px] text-zinc-500">
+                                {routineCategoryLabel(normalizeRoutineCategory(ex.category))}
+                              </p>
+                            </div>
+                          </label>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    setPickerSelectedIds(new Set());
+                  }}
+                  className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    addSelectedExercisesToDraft();
+                    setPickerOpen(false);
+                  }}
+                  disabled={pickerSelectedIds.size === 0}
+                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Añadir {pickerSelectedIds.size > 0 ? `${pickerSelectedIds.size} ` : ""}
+                  ejercicio{pickerSelectedIds.size === 1 ? "" : "s"}
+                </button>
               </div>
             </div>
           ) : null}
