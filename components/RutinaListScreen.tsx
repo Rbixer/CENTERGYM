@@ -10,6 +10,8 @@ import {
 import type { RoutineCategoryId } from "@/lib/routine-categories";
 import { RestTimer } from "@/components/RestTimer";
 import { ShareWorkoutButton } from "@/components/ShareWorkoutButton";
+import { WorkoutPlayer } from "@/components/WorkoutPlayer";
+import { TabataTimer } from "@/components/TabataTimer";
 
 const ROUTINE_FALLBACK_SRC = "/images/routines/placeholder.gif";
 
@@ -119,6 +121,7 @@ function RoutineItemCard({
 function WorkoutDetailCard({ r }: { r: RutinaPublica }) {
   const totalSets = r.items.reduce((acc, it) => acc + it.sets, 0);
   const [shareUrl, setShareUrl] = useState("");
+  const [playerOpen, setPlayerOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -129,6 +132,9 @@ function WorkoutDetailCard({ r }: { r: RutinaPublica }) {
 
   return (
     <div className="space-y-4">
+      {playerOpen ? (
+        <WorkoutPlayer rutina={r} onClose={() => setPlayerOpen(false)} />
+      ) : null}
       <header className="rounded-2xl border border-emerald-700/30 bg-emerald-950/30 px-4 py-4 text-emerald-50/90 sm:px-5 sm:py-5">
         <p className="text-xs uppercase tracking-wide text-emerald-300">
           {routineCategoryLabel(normalizeRoutineCategory(r.categoria))}
@@ -147,6 +153,16 @@ function WorkoutDetailCard({ r }: { r: RutinaPublica }) {
         </p>
 
         <div className="no-print mt-4 flex flex-wrap gap-2">
+          {r.items.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setPlayerOpen(true)}
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-emerald-950 shadow-sm hover:bg-emerald-400"
+              aria-label="Iniciar entrenamiento guiado"
+            >
+              ▶ Iniciar entrenamiento
+            </button>
+          ) : null}
           {shareUrl ? (
             <ShareWorkoutButton title={r.nombre} url={shareUrl} />
           ) : null}
@@ -195,6 +211,7 @@ export function RutinaListScreen({
 }: RutinaListScreenProps) {
   const [rutinas, setRutinas] = useState<RutinaPublica[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tabataOpen, setTabataOpen] = useState(false);
   // Filtro local de categoría aplicado por el usuario; arranca con el prop
   // (compatibilidad con páginas tipo /rutina/categoria/<x>).
   const [filterCategory, setFilterCategory] = useState<RoutineCategoryId | null>(
@@ -493,6 +510,19 @@ export function RutinaListScreen({
           </section>
         )}
       </div>
+
+      {!focusedRoutineId ? (
+        <button
+          type="button"
+          onClick={() => setTabataOpen(true)}
+          className="no-print fixed bottom-5 right-5 z-40 inline-flex items-center gap-2 rounded-full bg-amber-500 px-4 py-3 text-sm font-bold text-amber-950 shadow-xl shadow-amber-500/30 hover:bg-amber-400 sm:bottom-6 sm:right-6"
+          aria-label="Abrir cronómetro Tabata"
+        >
+          ⏱ Tabata
+        </button>
+      ) : null}
+
+      {tabataOpen ? <TabataTimer onClose={() => setTabataOpen(false)} /> : null}
     </div>
   );
 }
