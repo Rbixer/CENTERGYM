@@ -59,6 +59,63 @@ function previewSrc(ex: { gifUrl: string; thumbUrl?: string | null }): string {
   return ex.thumbUrl || ex.gifUrl;
 }
 
+/**
+ * Plantillas de esquema series×repeticiones para rellenar de un toque. Cada
+ * plantilla define los `defaults` que se aplicarán a:
+ *   a) cada ejercicio recién añadido al draft,
+ *   b) opcionalmente, todos los ejercicios ya añadidos (con el botón
+ *      "aplicar a todos" en la barra de plantillas).
+ *
+ * El esquema cubre los protocolos más usados en una sala (fuerza máxima,
+ * hipertrofia, resistencia, HIIT, movilidad). El admin puede seguir editando
+ * cada ejercicio individualmente después.
+ */
+type RoutineTemplateId =
+  | "strength"
+  | "hypertrophy"
+  | "endurance"
+  | "hiit"
+  | "mobility"
+  | "custom";
+
+type RoutineTemplate = {
+  id: RoutineTemplateId;
+  label: string;
+  icon: string;
+  short: string;
+  sets: number;
+  reps: string;
+  restSec: number;
+};
+
+const ROUTINE_TEMPLATES: readonly RoutineTemplate[] = [
+  { id: "strength", label: "Fuerza", icon: "💪", short: "5 × 5", sets: 5, reps: "5", restSec: 120 },
+  { id: "hypertrophy", label: "Hipertrofia", icon: "🏋️", short: "4 × 12", sets: 4, reps: "12", restSec: 60 },
+  { id: "endurance", label: "Resistencia", icon: "🏃", short: "3 × 15", sets: 3, reps: "15", restSec: 45 },
+  { id: "hiit", label: "HIIT", icon: "⚡", short: "4 × 30s", sets: 4, reps: "30 seg", restSec: 30 },
+  { id: "mobility", label: "Movilidad", icon: "🧘", short: "2 × 10", sets: 2, reps: "10 c/u", restSec: 30 },
+  { id: "custom", label: "Personalizado", icon: "✏️", short: "—", sets: 4, reps: "12", restSec: 60 },
+];
+
+function templateById(id: RoutineTemplateId): RoutineTemplate {
+  return ROUTINE_TEMPLATES.find((t) => t.id === id) ?? ROUTINE_TEMPLATES[1]!;
+}
+
+/**
+ * Duración estimada de la rutina en minutos: suma series × (tiempo_ejecución
+ * + descanso). Asumimos ~30s por serie de ejecución por defecto (peor caso
+ * razonable). Es solo informativo para que el admin tenga una idea.
+ */
+function estimateDurationMin(items: { sets: number; restSec: string }[]): number {
+  let totalSec = 0;
+  for (const it of items) {
+    const rest = Number(it.restSec) || 60;
+    const setSec = 30;
+    totalSec += it.sets * (setSec + rest);
+  }
+  return Math.max(1, Math.round(totalSec / 60));
+}
+
 type Workout = {
   id: string;
   name: string;
@@ -84,16 +141,17 @@ type DraftItem = {
   notes: string;
 };
 
-function emptyDraftItem(ex: ExerciseRow): DraftItem {
+function emptyDraftItem(ex: ExerciseRow, template?: RoutineTemplate): DraftItem {
+  const t = template ?? templateById("hypertrophy");
   return {
     exerciseId: ex.id,
     exerciseName: ex.name,
     exerciseGifUrl: ex.gifUrl,
     exerciseThumbUrl: ex.thumbUrl ?? null,
     exerciseCategory: ex.category,
-    sets: 4,
-    reps: "12",
-    restSec: "",
+    sets: t.sets,
+    reps: t.reps,
+    restSec: String(t.restSec),
     notes: "",
   };
 }
@@ -133,11 +191,16 @@ export function AdminWorkoutsPanel() {
   // Editor state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState<RoutineCategoryId>(
     DEFAULT_ROUTINE_CATEGORY,
   );
   const [items, setItems] = useState<DraftItem[]>([]);
+  /** Esquema activo (define defaults para nuevos ejercicios y bulk-apply). */
+  const [templateId, setTemplateId] = useState<RoutineTemplateId>("hypertrophy");
+  /** Qué ejercicio está mostrando el acordeón "Más opciones" (-1 = ninguno). */
+  const [expandedItemIdx, setExpandedItemIdx] = useState<number>(-1);
   const [saving, setSaving] = useState(false);
 
   // Selector de ejercicios (modal inline). Soporta multiselección: el admin
@@ -220,14 +283,18 @@ export function AdminWorkoutsPanel() {
   function resetEditor() {
     setEditingId(null);
     setName("");
+    setNameTouched(false);
     setDescription("");
     setCategory(DEFAULT_ROUTINE_CATEGORY);
     setItems([]);
+    setTemplateId("hypertrophy");
+    setExpandedItemIdx(-1);
   }
 
   function startEdit(w: Workout) {
     setEditingId(w.id);
     setName(w.name);
+    setNameTouched(true);
     setDescription(w.description);
     setCategory(normalizeRoutineCategory(w.category));
     setItems(w.items.map(itemFromServer));
@@ -256,7 +323,8 @@ export function AdminWorkoutsPanel() {
       }
       // Conserva el orden en que aparecen en la biblioteca (categoría/nombre).
       const ordered = library.filter((ex) => pickerSelectedIds.has(ex.id));
-      const toAdd = ordered.slice(0, slotsLeft).map(emptyDraftItem);
+      const template = templateById(templateId);
+      const toAdd = ordered.slice(0, slotsLeft).map((ex) => emptyDraftItem(ex, template));
       if (ordered.length > slotsLeft) {
         toast(
           `Se añadieron ${slotsLeft} de ${ordered.length}: máximo ${MAX_WORKOUT_ITEMS} ejercicios por rutina.`,
@@ -277,6 +345,40 @@ export function AdminWorkoutsPanel() {
     setItems((prev) =>
       prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)),
     );
+  }
+
+  /**
+   * Aplica el esquema (sets/reps/restSec) a TODOS los ejercicios del draft.
+   * Se llama al pulsar un chip de plantilla cuando ya hay items en la rutina.
+   */
+  function applyTemplateToAll(t: RoutineTemplate) {
+    setItems((prev) =>
+      prev.map((it) => ({
+        ...it,
+        sets: t.sets,
+        reps: t.reps,
+        restSec: String(t.restSec),
+      })),
+    );
+    toast(
+      `Aplicado «${t.label} ${t.short}» a ${items.length} ejercicio${items.length === 1 ? "" : "s"}.`,
+      "success",
+    );
+  }
+
+  /**
+   * Sugiere un nombre tipo "Pecho — día 3" si el admin no ha escrito uno
+   * propio. Se basa en cuántas rutinas existen YA en esa categoría: así no
+   * pisa numeraciones existentes. Se llama cuando cambia la categoría o
+   * cuando se añaden los primeros ejercicios.
+   */
+  function suggestNameFor(cat: RoutineCategoryId): string {
+    if (workouts == null) return "";
+    const sameCat = workouts.filter(
+      (w) => normalizeRoutineCategory(w.category) === cat,
+    );
+    const dayNumber = sameCat.length + 1;
+    return `${routineCategoryLabel(cat)} — día ${dayNumber}`;
   }
 
   function removeItem(idx: number) {
@@ -463,20 +565,46 @@ export function AdminWorkoutsPanel() {
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="block text-sm font-medium">
             Nombre de la rutina
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={MAX_WORKOUT_NAME_LEN}
-              placeholder='Ej. "Empuje día 1"'
-              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-            />
+            <div className="mt-1 flex gap-2">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameTouched(true);
+                }}
+                maxLength={MAX_WORKOUT_NAME_LEN}
+                placeholder={suggestNameFor(category) || 'Ej. "Empuje día 1"'}
+                className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              />
+              {!name.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setName(suggestNameFor(category));
+                    setNameTouched(true);
+                  }}
+                  className="shrink-0 rounded-lg border border-emerald-300 bg-emerald-50 px-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                  title="Sugerir nombre"
+                >
+                  ✨
+                </button>
+              ) : null}
+            </div>
           </label>
           <label className="block text-sm font-medium">
             Categoría principal
             <select
               value={category}
-              onChange={(e) => setCategory(e.target.value as RoutineCategoryId)}
+              onChange={(e) => {
+                const next = e.target.value as RoutineCategoryId;
+                setCategory(next);
+                // Si el usuario aún no ha escrito un nombre propio, lo
+                // resugerimos para la nueva categoría.
+                if (!nameTouched) {
+                  setName(suggestNameFor(next));
+                }
+              }}
               className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
             >
               {ROUTINE_CATEGORIES.map((c) => (
@@ -500,12 +628,55 @@ export function AdminWorkoutsPanel() {
         </div>
 
         <div className="mt-5">
-          <div className="flex items-center justify-between gap-3">
+          <h4 className="text-sm font-semibold">
+            Esquema rápido{" "}
+            <span className="ml-1 text-[11px] font-normal text-zinc-500">
+              (define series y descanso para los ejercicios nuevos)
+            </span>
+          </h4>
+          <div className="-mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1 pb-1">
+            {ROUTINE_TEMPLATES.map((t) => {
+              const active = templateId === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setTemplateId(t.id);
+                    if (items.length > 0 && t.id !== "custom") {
+                      applyTemplateToAll(t);
+                    }
+                  }}
+                  className={`shrink-0 rounded-xl border-2 px-3 py-2 text-left transition active:scale-[0.97] ${
+                    active
+                      ? "border-emerald-500 bg-emerald-50 shadow-sm dark:bg-emerald-950/40"
+                      : "border-zinc-200 bg-white hover:border-emerald-300 dark:border-zinc-700 dark:bg-zinc-900"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-base leading-none">{t.icon}</span>
+                    <span className="text-xs font-semibold">{t.label}</span>
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-zinc-500">
+                    {t.short}
+                    {t.id !== "custom" ? ` · ${t.restSec}s desc.` : ""}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 flex items-center justify-between gap-3">
             <h4 className="text-sm font-semibold">
               Ejercicios{" "}
               <span className="ml-1 text-xs font-normal text-zinc-500">
                 ({items.length}/{MAX_WORKOUT_ITEMS})
               </span>
+              {items.length >= 2 ? (
+                <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  ~ {estimateDurationMin(items)} min
+                </span>
+              ) : null}
             </h4>
             <button
               type="button"
@@ -775,43 +946,92 @@ export function AdminWorkoutsPanel() {
                         : "border-zinc-200 dark:border-zinc-700"
                   }`}
                 >
-                  <div className="flex items-start gap-3">
-                    <span
-                      className="mt-1 cursor-grab select-none rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-zinc-500 active:cursor-grabbing dark:border-zinc-600 dark:bg-zinc-800"
-                      title="Arrastra para reordenar"
-                      aria-hidden
-                    >
-                      ⋮⋮
-                    </span>
-                    <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
+                  <div className="flex items-start gap-2">
+                    <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
                       <img
                         src={it.exerciseThumbUrl || it.exerciseGifUrl}
                         alt=""
                         loading="lazy"
                         decoding="async"
-                        className="h-full w-full object-contain"
+                        className="h-full w-full object-cover"
                         onError={withRoutineFallback}
                       />
+                      <span className="absolute -left-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white shadow">
+                        {idx + 1}
+                      </span>
                     </div>
+
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold">
-                            {idx + 1}. {it.exerciseName}
-                          </p>
-                          <p className="text-[11px] text-zinc-500">
-                            {routineCategoryLabel(
-                              normalizeRoutineCategory(it.exerciseCategory),
-                            )}
-                          </p>
+                      <p className="truncate text-sm font-semibold leading-tight">
+                        {it.exerciseName}
+                      </p>
+
+                      {/* Fila compacta: Series stepper + Reps inline */}
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="inline-flex items-center rounded-lg border border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateItem(idx, {
+                                sets: Math.max(MIN_SETS, it.sets - 1),
+                              })
+                            }
+                            disabled={it.sets <= MIN_SETS}
+                            aria-label="Una serie menos"
+                            className="h-9 w-9 text-base leading-none disabled:opacity-30"
+                          >
+                            −
+                          </button>
+                          <span className="min-w-[2.5rem] text-center text-sm font-bold tabular-nums">
+                            {it.sets}×
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateItem(idx, {
+                                sets: Math.min(MAX_SETS, it.sets + 1),
+                              })
+                            }
+                            disabled={it.sets >= MAX_SETS}
+                            aria-label="Una serie más"
+                            className="h-9 w-9 text-base leading-none disabled:opacity-30"
+                          >
+                            +
+                          </button>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
+
+                        <input
+                          type="text"
+                          inputMode="text"
+                          value={it.reps}
+                          onChange={(e) =>
+                            updateItem(idx, { reps: e.target.value.slice(0, MAX_REPS_LEN) })
+                          }
+                          placeholder="12 ó 12-15"
+                          aria-label="Repeticiones"
+                          className="h-9 w-24 rounded-lg border border-zinc-300 bg-white px-2 text-center text-sm font-semibold dark:border-zinc-600 dark:bg-zinc-900"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={() => setExpandedItemIdx(expandedItemIdx === idx ? -1 : idx)}
+                          aria-expanded={expandedItemIdx === idx}
+                          className={`h-9 rounded-lg border px-2 text-xs font-medium ${
+                            expandedItemIdx === idx
+                              ? "border-emerald-400 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200"
+                              : "border-zinc-300 bg-white text-zinc-700 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+                          }`}
+                        >
+                          {expandedItemIdx === idx ? "▲ Menos" : "⋯ Más"}
+                        </button>
+
+                        <span className="ml-auto inline-flex items-center gap-0.5">
                           <button
                             type="button"
                             onClick={() => moveItem(idx, -1)}
                             disabled={idx === 0}
                             aria-label="Subir"
-                            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs disabled:opacity-30 dark:border-zinc-600 dark:bg-zinc-900"
+                            className="h-9 w-8 rounded-md border border-zinc-300 bg-white text-xs disabled:opacity-30 dark:border-zinc-600 dark:bg-zinc-900"
                           >
                             ▲
                           </button>
@@ -820,88 +1040,69 @@ export function AdminWorkoutsPanel() {
                             onClick={() => moveItem(idx, 1)}
                             disabled={idx === items.length - 1}
                             aria-label="Bajar"
-                            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs disabled:opacity-30 dark:border-zinc-600 dark:bg-zinc-900"
+                            className="h-9 w-8 rounded-md border border-zinc-300 bg-white text-xs disabled:opacity-30 dark:border-zinc-600 dark:bg-zinc-900"
                           >
                             ▼
                           </button>
                           <button
                             type="button"
                             onClick={() => removeItem(idx)}
-                            className="rounded-md border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+                            aria-label="Quitar"
+                            className="h-9 w-9 rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-700 dark:bg-red-950/40 dark:text-red-200"
+                            title="Quitar de la rutina"
                           >
-                            Quitar
+                            ✕
                           </button>
-                        </div>
+                        </span>
                       </div>
 
-                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        <label className="block text-xs font-medium">
-                          Series
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min={MIN_SETS}
-                            max={MAX_SETS}
-                            step={1}
-                            value={it.sets}
-                            onChange={(e) =>
-                              updateItem(idx, {
-                                sets: Math.max(
-                                  MIN_SETS,
-                                  Math.min(MAX_SETS, Number(e.target.value) || MIN_SETS),
-                                ),
-                              })
-                            }
-                            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          />
-                        </label>
-                        <label className="block text-xs font-medium">
-                          Reps
-                          <input
-                            type="text"
-                            inputMode="text"
-                            value={it.reps}
-                            onChange={(e) =>
-                              updateItem(idx, { reps: e.target.value.slice(0, MAX_REPS_LEN) })
-                            }
-                            placeholder='12 ó 12-15'
-                            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          />
-                        </label>
-                        <label className="block text-xs font-medium">
-                          Descanso (seg)
-                          <input
-                            type="number"
-                            inputMode="numeric"
-                            min={0}
-                            max={600}
-                            step={5}
-                            value={it.restSec}
-                            onChange={(e) => updateItem(idx, { restSec: e.target.value })}
-                            placeholder="60"
-                            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          />
-                        </label>
-                        <label className="block text-xs font-medium sm:col-span-1">
-                          Nota
-                          <input
-                            type="text"
-                            value={it.notes}
-                            onChange={(e) =>
-                              updateItem(idx, { notes: e.target.value.slice(0, MAX_NOTES_LEN) })
-                            }
-                            placeholder='RIR 2, drop set…'
-                            className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-                          />
-                        </label>
-                      </div>
-                      <p className="mt-2 text-xs text-zinc-500">
-                        Resumen:{" "}
-                        <strong className="text-zinc-800 dark:text-zinc-200">
-                          {it.sets} series × {it.reps || "—"}
-                        </strong>
-                        {it.restSec ? ` · descanso ${it.restSec}s` : ""}
-                      </p>
+                      {/* Acordeón con campos avanzados */}
+                      {expandedItemIdx === idx ? (
+                        <div className="mt-3 grid gap-2 rounded-lg bg-zinc-50 p-2 dark:bg-zinc-800/40 sm:grid-cols-2">
+                          <label className="block text-xs font-medium">
+                            Descanso entre series
+                            <div className="mt-1 inline-flex items-center rounded-lg border border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-900">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const n = Math.max(0, (Number(it.restSec) || 0) - 15);
+                                  updateItem(idx, { restSec: String(n) });
+                                }}
+                                aria-label="Menos descanso"
+                                className="h-9 w-9 text-base leading-none"
+                              >
+                                −
+                              </button>
+                              <span className="min-w-[4rem] text-center text-sm font-bold tabular-nums">
+                                {it.restSec || "0"}s
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const n = Math.min(600, (Number(it.restSec) || 0) + 15);
+                                  updateItem(idx, { restSec: String(n) });
+                                }}
+                                aria-label="Más descanso"
+                                className="h-9 w-9 text-base leading-none"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </label>
+                          <label className="block text-xs font-medium">
+                            Nota (RIR, técnica…)
+                            <input
+                              type="text"
+                              value={it.notes}
+                              onChange={(e) =>
+                                updateItem(idx, { notes: e.target.value.slice(0, MAX_NOTES_LEN) })
+                              }
+                              placeholder="RIR 2, drop set…"
+                              className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+                            />
+                          </label>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </li>
@@ -910,30 +1111,55 @@ export function AdminWorkoutsPanel() {
           )}
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
+        {/* Espaciador para evitar que la sticky bar tape el último item. */}
+        <div className="h-24" aria-hidden />
+      </div>
+
+      {/* Sticky bottom bar: el botón Guardar siempre visible en mobile y
+          desktop, con el FAB redondo para volver a abrir el picker en cualquier
+          momento sin tener que hacer scroll. Solo se renderiza si hay editor
+          activo (nombre o ejercicios), para no estorbar al ver la lista. */}
+      {(items.length > 0 || name.trim() || editingId) && !pickerOpen ? (
+        <div className="sticky bottom-3 z-30 mx-[-0.25rem] flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white/95 p-2 shadow-2xl backdrop-blur dark:border-zinc-700 dark:bg-zinc-900/95">
           <button
             type="button"
-            onClick={() => void save()}
-            disabled={saving || items.length === 0 || !name.trim()}
-            className="min-h-[44px] rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => setPickerOpen(true)}
+            disabled={noLibrary || items.length >= MAX_WORKOUT_ITEMS}
+            aria-label="Añadir ejercicios"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-2xl font-bold text-white shadow-lg hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Añadir ejercicios"
           >
-            {saving
-              ? "Guardando…"
-              : editingId
-                ? "Guardar cambios"
-                : "Crear rutina"}
+            +
           </button>
+          <div className="min-w-0 flex-1 text-xs">
+            <p className="truncate font-semibold">
+              {items.length === 0
+                ? "Añade ejercicios para empezar"
+                : `${items.length} ejercicio${items.length === 1 ? "" : "s"} · ~${estimateDurationMin(items)} min`}
+            </p>
+            <p className="truncate text-zinc-500">
+              {name.trim() ? name : "Escribe un nombre arriba"}
+            </p>
+          </div>
           {editingId ? (
             <button
               type="button"
               onClick={resetEditor}
-              className="min-h-[44px] rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              className="h-12 rounded-lg border border-zinc-300 bg-white px-3 text-xs font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
             >
-              Cancelar edición
+              Cancelar
             </button>
           ) : null}
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || items.length === 0 || !name.trim()}
+            className="h-12 shrink-0 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? "…" : editingId ? "Guardar" : "Crear"}
+          </button>
         </div>
-      </div>
+      ) : null}
 
       <div>
         <h3 className="text-base font-semibold">
