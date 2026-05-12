@@ -11,7 +11,7 @@ export default function RutinaPage() {
         </div>
         <h1 className="mt-4 text-lg font-semibold text-foreground">Rutinas</h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Elige un tipo: abrirá la lista de rutinas de esa zona. Y la explicación de cada una.
+          Toca una rutina para ver todos sus ejercicios con series y repeticiones.
         </p>
         <p className="mt-3">
           <Link
