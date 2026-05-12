@@ -5,8 +5,11 @@ import { parseResponseJson } from "@/lib/parse-response-json";
 import {
   normalizeRoutineCategory,
   routineCategoryLabel,
+  ROUTINE_CATEGORIES,
 } from "@/lib/routine-categories";
 import type { RoutineCategoryId } from "@/lib/routine-categories";
+import { RestTimer } from "@/components/RestTimer";
+import { ShareWorkoutButton } from "@/components/ShareWorkoutButton";
 
 const ROUTINE_FALLBACK_SRC = "/images/routines/placeholder.gif";
 
@@ -89,6 +92,12 @@ function RoutineItemCard({
             ) : null}
           </div>
 
+          {item.rest_sec ? (
+            <div className="no-print">
+              <RestTimer seconds={item.rest_sec} />
+            </div>
+          ) : null}
+
           {item.notes ? (
             <p className="mt-3 rounded-lg border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-700/40 dark:bg-amber-950/40 dark:text-amber-100">
               <strong className="font-semibold">Nota: </strong>
@@ -109,6 +118,15 @@ function RoutineItemCard({
 
 function WorkoutDetailCard({ r }: { r: RutinaPublica }) {
   const totalSets = r.items.reduce((acc, it) => acc + it.sets, 0);
+  const [shareUrl, setShareUrl] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const u = new URL(window.location.href);
+    u.searchParams.set("rutina", r.id);
+    setShareUrl(u.toString());
+  }, [r.id]);
+
   return (
     <div className="space-y-4">
       <header className="rounded-2xl border border-emerald-700/30 bg-emerald-950/30 px-4 py-4 text-emerald-50/90 sm:px-5 sm:py-5">
@@ -127,6 +145,20 @@ function WorkoutDetailCard({ r }: { r: RutinaPublica }) {
           {r.items.length} ejercicio{r.items.length === 1 ? "" : "s"} ·{" "}
           {totalSets} series totales
         </p>
+
+        <div className="no-print mt-4 flex flex-wrap gap-2">
+          {shareUrl ? (
+            <ShareWorkoutButton title={r.nombre} url={shareUrl} />
+          ) : null}
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            aria-label="Imprimir rutina"
+          >
+            Imprimir
+          </button>
+        </div>
       </header>
 
       {r.items.length === 0 ? (
@@ -153,6 +185,9 @@ type RutinaListScreenProps = {
   onFocusedChange: (id: string | null) => void;
 };
 
+/** Cada cuánto refresca el listado de rutinas mientras la pestaña está activa. */
+const POLL_INTERVAL_MS = 60_000;
+
 export function RutinaListScreen({
   categoryId,
   focusedRoutineId,
@@ -160,47 +195,89 @@ export function RutinaListScreen({
 }: RutinaListScreenProps) {
   const [rutinas, setRutinas] = useState<RutinaPublica[]>([]);
   const [loading, setLoading] = useState(true);
+  // Filtro local de categoría aplicado por el usuario; arranca con el prop
+  // (compatibilidad con páginas tipo /rutina/categoria/<x>).
+  const [filterCategory, setFilterCategory] = useState<RoutineCategoryId | null>(
+    categoryId,
+  );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    setFilterCategory(categoryId);
+  }, [categoryId]);
+
+  const load = useCallback(async (showLoader = true) => {
+    if (showLoader) setLoading(true);
     try {
       const res = await fetch("/api/workouts", { cache: "no-store" });
       const parsed = await parseResponseJson<{ rutinas?: RutinaPublica[]; error?: string }>(
         res,
       );
       if (parsed.parseError || !parsed.body || !parsed.ok) {
-        setRutinas([]);
+        if (showLoader) setRutinas([]);
         return;
       }
       setRutinas(parsed.body.rutinas ?? []);
     } catch {
-      setRutinas([]);
+      if (showLoader) setRutinas([]);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
+    void load(true);
   }, [load]);
 
+  // Polling silencioso cada minuto cuando la pestaña está visible.
   useEffect(() => {
-    const onVis = () => {
-      if (document.visibilityState === "visible") void load();
+    let timer: number | null = null;
+    const startPolling = () => {
+      if (timer != null) return;
+      timer = window.setInterval(() => {
+        if (document.visibilityState === "visible") void load(false);
+      }, POLL_INTERVAL_MS);
     };
+    const stopPolling = () => {
+      if (timer != null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        void load(false);
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+    if (document.visibilityState === "visible") startPolling();
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [load]);
 
   const detalleRef = useRef<HTMLDivElement | null>(null);
   const listadoRef = useRef<HTMLDivElement | null>(null);
 
+  // Set de categorías que existen en las rutinas actuales (orden estable
+  // según ROUTINE_CATEGORIES). Sólo se muestran chips cuando hay >1 categoría.
+  const availableCategories = useMemo(() => {
+    const present = new Set<RoutineCategoryId>();
+    for (const r of rutinas) {
+      present.add(normalizeRoutineCategory(r.categoria));
+    }
+    return ROUTINE_CATEGORIES.filter((c) => present.has(c.id));
+  }, [rutinas]);
+
   const filtradas = useMemo(() => {
-    if (categoryId === null) return rutinas;
+    if (filterCategory === null) return rutinas;
     return rutinas.filter(
-      (r) => normalizeRoutineCategory(r.categoria) === categoryId,
+      (r) => normalizeRoutineCategory(r.categoria) === filterCategory,
     );
-  }, [rutinas, categoryId]);
+  }, [rutinas, filterCategory]);
 
   const selected = useMemo(
     () => (focusedRoutineId ? filtradas.find((r) => r.id === focusedRoutineId) : undefined),
@@ -226,7 +303,7 @@ export function RutinaListScreen({
   const didInitScroll = useRef(false);
   useEffect(() => {
     if (loading || didInitScroll.current) return;
-    if (categoryId === null) {
+    if (filterCategory === null) {
       didInitScroll.current = true;
       return;
     }
@@ -237,7 +314,7 @@ export function RutinaListScreen({
     }
   }, [
     loading,
-    categoryId,
+    filterCategory,
     focusedRoutineId,
     rutinas.length,
     scrollListadoIntoView,
@@ -250,19 +327,60 @@ export function RutinaListScreen({
   }
 
   const labelCat =
-    categoryId === null
+    filterCategory === null
       ? "Todas las categorías"
-      : routineCategoryLabel(categoryId);
+      : routineCategoryLabel(filterCategory);
 
   const emptyListMessage =
     rutinas.length === 0
-      ? categoryId === null
+      ? filterCategory === null
         ? "Aún no hay rutinas publicadas. Cuando el gimnasio las cree en administración, aparecerán aquí."
         : `Aún no hay rutinas en «${labelCat}».`
       : `No hay rutinas en «${labelCat}».`;
 
   return (
     <div className="space-y-6">
+      {!focusedRoutineId && availableCategories.length > 1 ? (
+        <div
+          className="no-print -mb-2 flex flex-wrap items-center gap-2"
+          aria-label="Filtrar rutinas por categoría"
+        >
+          <button
+            type="button"
+            onClick={() => setFilterCategory(null)}
+            aria-pressed={filterCategory === null}
+            className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+              filterCategory === null
+                ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
+                : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+            }`}
+          >
+            Todas ({rutinas.length})
+          </button>
+          {availableCategories.map((c) => {
+            const count = rutinas.filter(
+              (r) => normalizeRoutineCategory(r.categoria) === c.id,
+            ).length;
+            const active = filterCategory === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setFilterCategory(c.id)}
+                aria-pressed={active}
+                className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                  active
+                    ? "border-emerald-600 bg-emerald-600 text-white shadow-sm"
+                    : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
+                }`}
+              >
+                {c.label} ({count})
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       <div
         ref={listadoRef}
         id="rutina-listado"
@@ -323,9 +441,9 @@ export function RutinaListScreen({
               id="rutinas-lista-titulo"
               className="text-sm font-semibold text-zinc-900 dark:text-zinc-100"
             >
-              {categoryId === null
+              {filterCategory === null
                 ? "Todas las rutinas — toca una para ver los ejercicios"
-                : "Rutinas en esta categoría — toca una para ver los ejercicios"}
+                : `Rutinas en «${labelCat}» — toca una para ver los ejercicios`}
             </h2>
             <p className="mt-1 text-xs text-zinc-500">Contenido publicado por el gimnasio.</p>
             <ul className="mt-3 flex flex-col gap-2">

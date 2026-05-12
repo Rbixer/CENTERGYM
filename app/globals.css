@@ -34,6 +34,8 @@ html.dark {
 html {
   -webkit-text-size-adjust: 100%;
   background: var(--background);
+  /* Evita “rebote” horizontal en gestos de borde en iOS */
+  overflow-x: clip;
 }
 
 body {
@@ -43,6 +45,8 @@ body {
   padding-right: env(safe-area-inset-right, 0px);
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: none;
 }
 
 /* PWA instalada: el script ya añade `.dark`; aquí solo overscroll e hint. */
@@ -74,5 +78,48 @@ a {
 @media (max-width: 640px) {
   .admin-app-shell :is(input, textarea, select) {
     font-size: 1rem;
+  }
+}
+
+/* Vista de impresión / "guardar como PDF" de una rutina.
+   Oculta todo lo que no es contenido principal (nav, banners, botones de
+   acción, timers) y fuerza tema claro para ahorrar tinta. */
+@media print {
+  :root {
+    --background: #ffffff;
+    --foreground: #0f172a;
+  }
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  /* Cualquier elemento marcado como `.no-print` (botones de acción, banners,
+     selectores de filtro, timer interactivo, etc.) se elimina al imprimir. */
+  .no-print,
+  header[role="banner"],
+  nav,
+  footer,
+  .pwa-install-hint {
+    display: none !important;
+  }
+  /* Las tarjetas de ejercicio deben mantenerse juntas en una hoja. */
+  article,
+  li,
+  ol > li {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  /* Quita sombras y backgrounds oscuros para impresión limpia. */
+  * {
+    box-shadow: none !important;
+  }
+  .dark\:bg-zinc-900\/40,
+  .dark\:bg-zinc-900\/50,
+  .dark\:bg-zinc-900\/60,
+  .dark\:bg-zinc-800,
+  .bg-emerald-950\/30 {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
   }
 }

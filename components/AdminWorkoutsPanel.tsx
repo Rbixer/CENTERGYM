@@ -133,6 +133,10 @@ export function AdminWorkoutsPanel() {
   );
   const [pickerSearch, setPickerSearch] = useState("");
 
+  // Drag & drop: índice del item que se está arrastrando.
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
   const refresh = useCallback(async () => {
     setLoadError(null);
     setSetupHint(null);
@@ -239,6 +243,31 @@ export function AdminWorkoutsPanel() {
       next.splice(j, 0, moved!);
       return next;
     });
+  }
+
+  function reorderItems(from: number, to: number) {
+    setItems((prev) => {
+      if (from === to || from < 0 || from >= prev.length) return prev;
+      const next = prev.slice();
+      const [moved] = next.splice(from, 1);
+      const insertAt = Math.max(0, Math.min(next.length, to));
+      next.splice(insertAt, 0, moved!);
+      return next;
+    });
+  }
+
+  async function duplicate(id: string, label: string) {
+    const res = await fetch(`/api/admin/workouts/${id}/duplicate`, {
+      method: "POST",
+      credentials: "include",
+    });
+    const p = await parseResponseJson<{ error?: string }>(res);
+    if (p.parseError || !p.ok) {
+      toast(p.body?.error ?? p.parseError ?? "Error al duplicar", "error");
+      return;
+    }
+    await refresh();
+    toast(`«${label}» duplicada. Edítala arriba si quieres cambiar algo.`, "success");
   }
 
   async function save() {
@@ -497,9 +526,51 @@ export function AdminWorkoutsPanel() {
               {items.map((it, idx) => (
                 <li
                   key={`${it.exerciseId}-${idx}`}
-                  className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-900/60"
+                  draggable
+                  onDragStart={(e) => {
+                    setDragIndex(idx);
+                    e.dataTransfer.effectAllowed = "move";
+                    try {
+                      e.dataTransfer.setData("text/plain", String(idx));
+                    } catch {}
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragOverIndex !== idx) setDragOverIndex(idx);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverIndex === idx) setDragOverIndex(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from =
+                      dragIndex ??
+                      Number(e.dataTransfer.getData("text/plain"));
+                    if (Number.isFinite(from)) reorderItems(from, idx);
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null);
+                    setDragOverIndex(null);
+                  }}
+                  className={`rounded-xl border bg-white p-3 transition dark:bg-zinc-900/60 ${
+                    dragIndex === idx
+                      ? "border-emerald-500/70 opacity-50"
+                      : dragOverIndex === idx
+                        ? "border-emerald-500 ring-2 ring-emerald-300/50 dark:ring-emerald-800/50"
+                        : "border-zinc-200 dark:border-zinc-700"
+                  }`}
                 >
                   <div className="flex items-start gap-3">
+                    <span
+                      className="mt-1 cursor-grab select-none rounded-md border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-zinc-500 active:cursor-grabbing dark:border-zinc-600 dark:bg-zinc-800"
+                      title="Arrastra para reordenar"
+                      aria-hidden
+                    >
+                      ⋮⋮
+                    </span>
                     <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
                       <img
                         src={it.exerciseGifUrl}
@@ -696,13 +767,20 @@ export function AdminWorkoutsPanel() {
                       </ul>
                     ) : null}
                   </div>
-                  <div className="flex shrink-0 gap-2">
+                  <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => startEdit(w)}
                       className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                     >
                       Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void duplicate(w.id, w.name)}
+                      className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
+                    >
+                      Duplicar
                     </button>
                     <button
                       type="button"
