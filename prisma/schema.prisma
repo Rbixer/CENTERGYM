@@ -103,8 +103,18 @@ model Routine {
   name         String
   description  String
   gifUrl       String
+  /// URL relativa a un thumbnail JPG/WebP de baja resolución (~10-20KB) que
+  /// se usa en listados y selectores donde no necesitamos la animación
+  /// completa. El GIF (`gifUrl`) se reserva para detalle de rutina y modo
+  /// entrenamiento guiado. Null cuando no se ha generado todavía.
+  thumbUrl     String?
   /// Slug de zona/tipo (`lib/routine-categories`): biceps, piernas, etc.
   category     String         @default("general")
+  /// Equipamiento requerido: "body weight", "dumbbell", "barbell", "cable",
+  /// "kettlebell", "band", "machine", etc. Slug interno, mostrado en la UI
+  /// vía `lib/equipment.ts`. Null cuando no se conoce (ej. ejercicios creados
+  /// manualmente antes de añadir este campo).
+  equipment    String?
   sortOrder    Int            @default(0)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt

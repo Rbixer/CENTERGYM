@@ -10,6 +10,7 @@ import {
   routineCategoryLabel,
   type RoutineCategoryId,
 } from "@/lib/routine-categories";
+import { EQUIPMENTS, equipmentLabel } from "@/lib/equipment";
 import {
   MAX_REPS_LEN,
   MAX_SETS,
@@ -36,7 +37,11 @@ type ExerciseRow = {
   name: string;
   description: string;
   gifUrl: string;
+  /** Thumbnail JPG ligero (~10KB). Si está disponible, lo usamos en grids. */
+  thumbUrl?: string | null;
   category: string;
+  /** Slug de equipamiento ("dumbbell", "barbell"…). Null si no se conoce. */
+  equipment?: string | null;
 };
 
 /** Ítem de una rutina-sesión tal como lo devuelve `/api/admin/workouts`. */
@@ -48,6 +53,11 @@ type WorkoutItem = {
   notes: string | null;
   exercise: ExerciseRow;
 };
+
+/** Función helper: prefiere thumb sobre gif para listados/grids. */
+function previewSrc(ex: { gifUrl: string; thumbUrl?: string | null }): string {
+  return ex.thumbUrl || ex.gifUrl;
+}
 
 type Workout = {
   id: string;
@@ -65,6 +75,8 @@ type DraftItem = {
   exerciseId: string;
   exerciseName: string;
   exerciseGifUrl: string;
+  /** Preview ligero usado en la lista del editor. */
+  exerciseThumbUrl?: string | null;
   exerciseCategory: string;
   sets: number;
   reps: string;
@@ -77,6 +89,7 @@ function emptyDraftItem(ex: ExerciseRow): DraftItem {
     exerciseId: ex.id,
     exerciseName: ex.name,
     exerciseGifUrl: ex.gifUrl,
+    exerciseThumbUrl: ex.thumbUrl ?? null,
     exerciseCategory: ex.category,
     sets: 4,
     reps: "12",
@@ -90,6 +103,7 @@ function itemFromServer(it: WorkoutItem): DraftItem {
     exerciseId: it.exercise.id,
     exerciseName: it.exercise.name,
     exerciseGifUrl: it.exercise.gifUrl,
+    exerciseThumbUrl: it.exercise.thumbUrl ?? null,
     exerciseCategory: it.exercise.category,
     sets: it.sets,
     reps: it.reps,
@@ -132,6 +146,7 @@ export function AdminWorkoutsPanel() {
   const [pickerCategory, setPickerCategory] = useState<RoutineCategoryId | "all">(
     "all",
   );
+  const [pickerEquipment, setPickerEquipment] = useState<string>("all");
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerSelectedIds, setPickerSelectedIds] = useState<Set<string>>(
     () => new Set<string>(),
@@ -381,13 +396,33 @@ export function AdminWorkoutsPanel() {
     const q = pickerSearch.trim().toLowerCase();
     return library.filter((ex) => {
       if (pickerCategory !== "all" && ex.category !== pickerCategory) return false;
+      if (pickerEquipment !== "all" && (ex.equipment ?? "") !== pickerEquipment) return false;
       if (!q) return true;
       return (
         ex.name.toLowerCase().includes(q) ||
         ex.description.toLowerCase().includes(q)
       );
     });
-  }, [library, pickerCategory, pickerSearch]);
+  }, [library, pickerCategory, pickerEquipment, pickerSearch]);
+
+  /** Equipamientos presentes en la biblioteca actual, para mostrar solo los útiles. */
+  const availableEquipments = useMemo(() => {
+    const present = new Set<string>();
+    for (const ex of library) {
+      if (ex.equipment) present.add(ex.equipment);
+    }
+    return EQUIPMENTS.filter((e) => present.has(e.id));
+  }, [library]);
+
+  /** Pausa el scroll del body cuando el picker está abierto (modal). */
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [pickerOpen]);
 
   const showSetup = !!setupHint;
   const noLibrary = !loadingLib && library.length === 0;
@@ -489,38 +524,88 @@ export function AdminWorkoutsPanel() {
           ) : null}
 
           {pickerOpen ? (
-            <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-900/60">
-              <div className="flex flex-wrap items-center gap-2">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Selector de ejercicios"
+              className="fixed inset-0 z-[80] flex flex-col bg-white dark:bg-zinc-950"
+            >
+              <header className="sticky top-0 z-10 flex flex-col gap-2 border-b border-zinc-200 bg-white px-4 py-3 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="truncate text-base font-bold">Elegir ejercicios</h3>
+                    <p className="truncate text-[11px] text-zinc-500">
+                      {filteredLibrary.length} disponible{filteredLibrary.length === 1 ? "" : "s"}
+                      {pickerSelectedIds.size > 0
+                        ? ` · ${pickerSelectedIds.size} marcado${pickerSelectedIds.size === 1 ? "" : "s"}`
+                        : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      setPickerSelectedIds(new Set());
+                    }}
+                    aria-label="Cerrar selector"
+                    className="rounded-full p-2 text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </div>
+
                 <input
                   type="search"
-                  placeholder="Buscar por nombre o descripción…"
+                  autoFocus
+                  placeholder="Buscar ejercicio…"
                   value={pickerSearch}
                   onChange={(e) => setPickerSearch(e.target.value)}
-                  className="min-w-[12rem] flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-800"
+                  className="w-full rounded-xl border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
                 />
-                <select
-                  value={pickerCategory}
-                  onChange={(e) =>
-                    setPickerCategory(e.target.value as RoutineCategoryId | "all")
-                  }
-                  className="rounded-lg border border-zinc-300 bg-white px-2 py-1.5 text-sm dark:border-zinc-600 dark:bg-zinc-800"
-                >
-                  <option value="all">Todas las zonas</option>
-                  {ROUTINE_CATEGORIES.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
 
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs dark:border-emerald-800 dark:bg-emerald-950/40">
-                <span className="font-medium text-emerald-900 dark:text-emerald-100">
-                  {pickerSelectedIds.size === 0
-                    ? "Marca varios ejercicios y pulsa «Añadir»."
-                    : `${pickerSelectedIds.size} marcado${pickerSelectedIds.size === 1 ? "" : "s"}`}
-                </span>
-                <div className="flex flex-wrap gap-2">
+                <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-0.5">
+                  <PickerChip
+                    active={pickerCategory === "all"}
+                    onClick={() => setPickerCategory("all")}
+                  >
+                    Todas las zonas
+                  </PickerChip>
+                  {ROUTINE_CATEGORIES.map((c) => (
+                    <PickerChip
+                      key={c.id}
+                      active={pickerCategory === c.id}
+                      onClick={() => setPickerCategory(c.id)}
+                    >
+                      {c.label}
+                    </PickerChip>
+                  ))}
+                </div>
+
+                {availableEquipments.length > 0 ? (
+                  <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-0.5">
+                    <PickerChip
+                      tone="slate"
+                      active={pickerEquipment === "all"}
+                      onClick={() => setPickerEquipment("all")}
+                    >
+                      Todo equipo
+                    </PickerChip>
+                    {availableEquipments.map((eq) => (
+                      <PickerChip
+                        key={eq.id}
+                        tone="slate"
+                        active={pickerEquipment === eq.id}
+                        onClick={() => setPickerEquipment(eq.id)}
+                      >
+                        {eq.label}
+                      </PickerChip>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="flex items-center justify-between gap-2">
                   {filteredLibrary.length > 0 ? (
                     <button
                       type="button"
@@ -539,66 +624,77 @@ export function AdminWorkoutsPanel() {
                           return next;
                         });
                       }}
-                      className="rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-zinc-900 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
+                      className="rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-100 dark:hover:bg-emerald-900/40"
                     >
                       {filteredLibrary.every((ex) => pickerSelectedIds.has(ex.id))
-                        ? "Quitar todos"
+                        ? "Quitar visibles"
                         : "Marcar todos los visibles"}
                     </button>
-                  ) : null}
+                  ) : <span />}
                   {pickerSelectedIds.size > 0 ? (
                     <button
                       type="button"
                       onClick={() => setPickerSelectedIds(new Set())}
-                      className="rounded-md border border-zinc-300 bg-white px-2 py-0.5 text-[11px] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                      className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
                     >
-                      Limpiar
+                      Limpiar selección
                     </button>
                   ) : null}
                 </div>
-              </div>
+              </header>
 
-              <div className="mt-3 max-h-72 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto px-3 py-3 pb-28">
                 {filteredLibrary.length === 0 ? (
-                  <p className="py-4 text-center text-xs text-zinc-500">
-                    Sin resultados para esa búsqueda.
+                  <p className="py-12 text-center text-sm text-zinc-500">
+                    No hay ejercicios que coincidan con esos filtros.
                   </p>
                 ) : (
-                  <ul className="divide-y divide-zinc-200 dark:divide-zinc-700">
+                  <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                     {filteredLibrary.map((ex) => {
                       const checked = pickerSelectedIds.has(ex.id);
                       return (
                         <li key={ex.id}>
-                          <label
-                            className={`flex w-full cursor-pointer items-center gap-3 px-2 py-2 text-left transition ${
+                          <button
+                            type="button"
+                            onClick={() => togglePickerSelection(ex.id)}
+                            aria-pressed={checked}
+                            className={`group relative flex w-full flex-col overflow-hidden rounded-xl border-2 text-left transition active:scale-[0.98] ${
                               checked
-                                ? "bg-emerald-50/60 dark:bg-emerald-950/30"
-                                : "hover:bg-emerald-50/30 dark:hover:bg-emerald-950/20"
+                                ? "border-emerald-500 bg-emerald-50 shadow-md ring-2 ring-emerald-300 ring-offset-1 dark:bg-emerald-950/30 dark:ring-emerald-700"
+                                : "border-zinc-200 bg-white hover:border-emerald-400 hover:bg-emerald-50/30 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-600"
                             }`}
                           >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => togglePickerSelection(ex.id)}
-                              className="h-4 w-4 shrink-0 accent-emerald-600"
-                              aria-label={`Seleccionar ${ex.name}`}
-                            />
-                            <div className="relative h-12 w-16 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
+                            <div className="relative aspect-square w-full bg-zinc-100 dark:bg-zinc-800">
                               <img
-                                src={ex.gifUrl}
+                                src={previewSrc(ex)}
                                 alt=""
                                 loading="lazy"
-                                className="h-full w-full object-contain"
+                                decoding="async"
+                                className="h-full w-full object-cover"
                                 onError={withRoutineFallback}
                               />
+                              <div
+                                className={`pointer-events-none absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full border-2 shadow-sm ${
+                                  checked
+                                    ? "border-white bg-emerald-600 text-white"
+                                    : "border-white bg-white/90 text-transparent"
+                                }`}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M5 12l5 5L20 7" />
+                                </svg>
+                              </div>
                             </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm font-medium">{ex.name}</p>
-                              <p className="truncate text-[11px] text-zinc-500">
+                            <div className="flex flex-col gap-0.5 p-2">
+                              <p className="line-clamp-2 text-[11.5px] font-semibold leading-tight">
+                                {ex.name}
+                              </p>
+                              <p className="truncate text-[10px] text-zinc-500">
                                 {routineCategoryLabel(normalizeRoutineCategory(ex.category))}
+                                {ex.equipment ? ` · ${equipmentLabel(ex.equipment)}` : ""}
                               </p>
                             </div>
-                          </label>
+                          </button>
                         </li>
                       );
                     })}
@@ -606,14 +702,14 @@ export function AdminWorkoutsPanel() {
                 )}
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+              <footer className="sticky bottom-0 z-10 flex items-center justify-between gap-3 border-t border-zinc-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.05)] dark:border-zinc-800 dark:bg-zinc-950">
                 <button
                   type="button"
                   onClick={() => {
                     setPickerOpen(false);
                     setPickerSelectedIds(new Set());
                   }}
-                  className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                  className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-100 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                 >
                   Cancelar
                 </button>
@@ -624,12 +720,12 @@ export function AdminWorkoutsPanel() {
                     setPickerOpen(false);
                   }}
                   disabled={pickerSelectedIds.size === 0}
-                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Añadir {pickerSelectedIds.size > 0 ? `${pickerSelectedIds.size} ` : ""}
                   ejercicio{pickerSelectedIds.size === 1 ? "" : "s"}
                 </button>
-              </div>
+              </footer>
             </div>
           ) : null}
 
@@ -689,9 +785,10 @@ export function AdminWorkoutsPanel() {
                     </span>
                     <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-950">
                       <img
-                        src={it.exerciseGifUrl}
+                        src={it.exerciseThumbUrl || it.exerciseGifUrl}
                         alt=""
                         loading="lazy"
+                        decoding="async"
                         className="h-full w-full object-contain"
                         onError={withRoutineFallback}
                       />
@@ -913,5 +1010,38 @@ export function AdminWorkoutsPanel() {
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Chip horizontal usado en el header del picker fullscreen. Dos tonos:
+ * "emerald" (zonas) y "slate" (equipamiento) para diferenciar visualmente
+ * cada hilera de filtros sin saturar.
+ */
+function PickerChip({
+  active,
+  onClick,
+  children,
+  tone = "emerald",
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  tone?: "emerald" | "slate";
+}) {
+  const activeCls =
+    tone === "emerald"
+      ? "border-emerald-500 bg-emerald-600 text-white shadow-sm"
+      : "border-slate-700 bg-slate-700 text-white shadow-sm dark:border-slate-300 dark:bg-slate-200 dark:text-slate-900";
+  const idleCls =
+    "border-zinc-300 bg-white text-zinc-700 hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-[12px] font-medium transition ${active ? activeCls : idleCls}`}
+    >
+      {children}
+    </button>
   );
 }
