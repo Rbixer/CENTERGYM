@@ -149,6 +149,11 @@ model PromoCode {
   /// Notas internas / contexto creado por el admin.
   notes         String?
   active        Boolean  @default(true)
+  /// Si es `true`, el código aparece en /promos para que cualquier cliente lo
+  /// vea y lo use. Si es `false` (por defecto), solo lo conoce quien lo
+  /// recibió por canal directo (WhatsApp, redes, encuesta). Los códigos de
+  /// tipo `survey_reward` siempre quedan como `false`.
+  isPublic      Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

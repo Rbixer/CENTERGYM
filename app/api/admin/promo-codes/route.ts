@@ -26,6 +26,7 @@ type ListedPromo = {
   validFrom: string | null;
   validUntil: string | null;
   active: boolean;
+  isPublic: boolean;
   createdAt: string;
   redemptionsCount: number;
   totalSavedCents: number;
@@ -56,6 +57,7 @@ export async function GET() {
       validFrom: r.validFrom?.toISOString() ?? null,
       validUntil: r.validUntil?.toISOString() ?? null,
       active: r.active,
+      isPublic: r.isPublic,
       createdAt: r.createdAt.toISOString(),
       redemptionsCount: r._count.redemptions,
       totalSavedCents: r.redemptions.reduce(
@@ -85,6 +87,7 @@ export async function POST(req: Request) {
     validFrom?: string | null;
     validUntil?: string | null;
     active?: boolean;
+    isPublic?: boolean;
     autoGenerate?: boolean;
   };
   try {
@@ -193,6 +196,7 @@ export async function POST(req: Request) {
         validFrom: parseDate(body.validFrom),
         validUntil: parseDate(body.validUntil),
         active: body.active !== false,
+        isPublic: body.isPublic === true,
       },
     });
     return NextResponse.json({ code: created });

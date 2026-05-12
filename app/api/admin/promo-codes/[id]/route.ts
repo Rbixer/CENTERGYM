@@ -24,6 +24,7 @@ export async function PATCH(
     validFrom?: string | null;
     validUntil?: string | null;
     active?: boolean;
+    isPublic?: boolean;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -76,6 +77,7 @@ export async function PATCH(
   if (body.validFrom !== undefined) data.validFrom = parseDate(body.validFrom);
   if (body.validUntil !== undefined) data.validUntil = parseDate(body.validUntil);
   if (typeof body.active === "boolean") data.active = body.active;
+  if (typeof body.isPublic === "boolean") data.isPublic = body.isPublic;
 
   if (Object.keys(data).length === 0) {
     return NextResponse.json({ error: "Sin cambios" }, { status: 400 });

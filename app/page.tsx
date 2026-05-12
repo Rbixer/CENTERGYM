@@ -1,7 +1,37 @@
 import Link from "next/link";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
+import { prisma } from "@/lib/prisma";
 
-export default function PortalPage() {
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+/**
+ * Cuenta cuántos códigos públicos están activos AHORA para decidir si mostrar
+ * el botón «Promos» con badge. Si la BD falla, ocultamos el botón sin romper
+ * la home (es solo decorativo).
+ */
+async function countActivePublicPromos(): Promise<number> {
+  try {
+    const now = new Date();
+    const rows = await prisma.promoCode.findMany({
+      where: {
+        isPublic: true,
+        active: true,
+        OR: [{ validUntil: null }, { validUntil: { gt: now } }],
+        AND: [{ OR: [{ validFrom: null }, { validFrom: { lte: now } }] }],
+      },
+      select: { maxUses: true, uses: true },
+    });
+    return rows.filter((r) => r.maxUses == null || r.uses < r.maxUses).length;
+  } catch {
+    return 0;
+  }
+}
+
+export default async function PortalPage() {
+  const promoCount = await countActivePublicPromos();
+  const hasPromos = promoCount > 0;
+
   return (
     <div className="mx-auto flex min-h-[100dvh] w-full max-w-lg flex-1 flex-col px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-10 sm:py-14">
       <header className="text-center">
@@ -12,9 +42,29 @@ export default function PortalPage() {
           ¿Qué deseas hacer?
         </h1>
         <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-          Encuesta, tienda o rutinas de ejemplo.
+          Encuesta, tienda{hasPromos ? ", promociones" : ""} o rutinas de ejemplo.
         </p>
       </header>
+
+      {hasPromos ? (
+        <Link
+          href="/promos"
+          className="group relative mt-8 flex items-center gap-3 overflow-hidden rounded-2xl border-2 border-amber-400 bg-gradient-to-r from-amber-100 via-yellow-50 to-amber-100 px-5 py-4 shadow-md transition hover:border-amber-500 hover:shadow-lg active:scale-[0.99] dark:border-amber-600 dark:from-amber-950/40 dark:via-yellow-950/30 dark:to-amber-950/40"
+        >
+          <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-amber-300/40 blur-2xl" />
+          <span className="relative text-2xl">🏷️</span>
+          <div className="relative min-w-0 flex-1">
+            <p className="text-sm font-bold text-amber-900 dark:text-amber-100">
+              ¡{promoCount} promoción{promoCount === 1 ? "" : "es"} activa
+              {promoCount === 1 ? "" : "s"}!
+            </p>
+            <p className="text-xs text-amber-800/80 dark:text-amber-200/80">
+              Toca para ver y copiar los códigos
+            </p>
+          </div>
+          <span className="relative text-lg font-bold text-amber-900 dark:text-amber-100">→</span>
+        </Link>
+      ) : null}
 
       <nav className="mt-10 grid flex-1 grid-cols-1 content-center gap-4 sm:mt-12 sm:grid-cols-3">
         <Link

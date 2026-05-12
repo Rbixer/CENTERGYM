@@ -20,6 +20,7 @@ type PromoCode = {
   validFrom: string | null;
   validUntil: string | null;
   active: boolean;
+  isPublic: boolean;
   createdAt: string;
   redemptionsCount: number;
   totalSavedCents: number;
@@ -79,6 +80,7 @@ export function AdminPromosPanel() {
   const [newMaxUses, setNewMaxUses] = useState("");
   const [newValidUntil, setNewValidUntil] = useState("");
   const [autoGenerate, setAutoGenerate] = useState(false);
+  const [newIsPublic, setNewIsPublic] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -115,6 +117,7 @@ export function AdminPromosPanel() {
         description: newDescription,
         discountType: newDiscountType,
         autoGenerate,
+        isPublic: newIsPublic,
       };
       if (!autoGenerate) body.code = newCode;
 
@@ -169,6 +172,7 @@ export function AdminPromosPanel() {
       setNewMaxUses("");
       setNewValidUntil("");
       setAutoGenerate(false);
+      setNewIsPublic(false);
       await refresh();
     } finally {
       setSaving(false);
@@ -188,6 +192,27 @@ export function AdminPromosPanel() {
       return;
     }
     toast(`Código «${c.code}» ${!c.active ? "activado" : "desactivado"}.`, "success");
+    await refresh();
+  }
+
+  async function togglePublic(c: PromoCode) {
+    const res = await fetch(`/api/admin/promo-codes/${c.id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ isPublic: !c.isPublic }),
+    });
+    const p = await parseResponseJson<{ code?: PromoCode; error?: string }>(res);
+    if (p.parseError || !p.ok) {
+      toast(p.body?.error ?? p.parseError ?? "Error", "error");
+      return;
+    }
+    toast(
+      !c.isPublic
+        ? `«${c.code}» ahora se muestra a todos los clientes.`
+        : `«${c.code}» dejó de mostrarse en /promos.`,
+      "success",
+    );
     await refresh();
   }
 
@@ -345,6 +370,24 @@ export function AdminPromosPanel() {
               className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800"
             />
           </div>
+
+          <div className="sm:col-span-2">
+            <label className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs dark:border-amber-800 dark:bg-amber-950/30">
+              <input
+                type="checkbox"
+                checked={newIsPublic}
+                onChange={(e) => setNewIsPublic(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-amber-600"
+              />
+              <span className="text-amber-900 dark:text-amber-100">
+                <strong className="block">Mostrar a todos los clientes</strong>
+                <span className="text-amber-800/80 dark:text-amber-200/70">
+                  Aparece en la página <code className="rounded bg-amber-100 px-1 dark:bg-amber-900/40">/promos</code> y
+                  se anuncia con un botón en la home. Déjalo desmarcado si vas a repartir el código por WhatsApp o redes.
+                </span>
+              </span>
+            </label>
+          </div>
         </div>
         <div className="mt-3 flex justify-end">
           <button
@@ -410,6 +453,11 @@ export function AdminPromosPanel() {
                         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
                           {kindLabel(c.kind)}
                         </span>
+                        {c.isPublic ? (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                            👁 Visible
+                          </span>
+                        ) : null}
                       </div>
                       <p className="mt-1 text-sm font-medium">
                         {discountText(c)}
@@ -445,6 +493,18 @@ export function AdminPromosPanel() {
                         className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                       >
                         Copiar link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void togglePublic(c)}
+                        title={c.isPublic ? "Quitar de /promos" : "Mostrar en /promos"}
+                        className={
+                          c.isPublic
+                            ? "rounded-lg border border-amber-400 bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-200 dark:border-amber-600 dark:bg-amber-900/50 dark:text-amber-100"
+                            : "rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                        }
+                      >
+                        {c.isPublic ? "👁 Visible" : "👁 Oculto"}
                       </button>
                       <button
                         type="button"
