@@ -15,6 +15,32 @@ import {
   getDeviceKey,
   hashIpForStorage,
 } from "@/lib/survey-rate-limit";
+import { DEFAULT_SURVEY_REWARD, ensureSurveyRewardCode } from "@/lib/promo";
+
+/**
+ * Crea (idempotente) el código de recompensa para la encuesta dada y lo
+ * devuelve listo para mandar al cliente. Si por cualquier motivo falla la
+ * generación, devolvemos `null` y NO rompemos el flujo de submit; el usuario
+ * sigue viendo "gracias" aunque no reciba premio.
+ */
+async function buildRewardForSubmission(submissionId: string) {
+  try {
+    const promo = await ensureSurveyRewardCode(prisma, {
+      submissionId,
+      ...DEFAULT_SURVEY_REWARD,
+    });
+    return {
+      code: promo.code,
+      discountType: promo.discountType,
+      discountValue: promo.discountValue,
+      minSubtotalCents: promo.minSubtotalCents,
+      validUntil: promo.validUntil?.toISOString() ?? null,
+    };
+  } catch (err) {
+    console.error("[submit/reward]", err);
+    return null;
+  }
+}
 
 const MAX_TRAINER_COMMENT = 2000;
 const MAX_REQUEST_ID = 80;
@@ -244,9 +270,11 @@ export async function POST(req: Request) {
       select: { id: true, submittedAt: true },
     });
     if (existing) {
+      const reward = await buildRewardForSubmission(existing.id);
       const res = NextResponse.json({
         id: existing.id,
         submittedAt: existing.submittedAt.toISOString(),
+        reward,
       });
       attachSurveyDoneCookie(res, createSurveyDoneToken());
       return res;
@@ -274,9 +302,11 @@ export async function POST(req: Request) {
       },
     });
 
+    const reward = await buildRewardForSubmission(submission.id);
     const res = NextResponse.json({
       id: submission.id,
       submittedAt: submission.submittedAt.toISOString(),
+      reward,
     });
     attachSurveyDoneCookie(res, createSurveyDoneToken());
     return res;
@@ -291,9 +321,11 @@ export async function POST(req: Request) {
           select: { id: true, submittedAt: true },
         });
         if (existing) {
+          const reward = await buildRewardForSubmission(existing.id);
           const res = NextResponse.json({
             id: existing.id,
             submittedAt: existing.submittedAt.toISOString(),
+            reward,
           });
           attachSurveyDoneCookie(res, createSurveyDoneToken());
           return res;

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
 import { TiendaClient } from "@/components/TiendaClient";
 
@@ -22,7 +23,9 @@ export default function TiendaPage() {
           </Link>
         </p>
       </header>
-      <TiendaClient />
+      <Suspense fallback={<p className="py-12 text-center text-sm text-zinc-500">Cargando…</p>}>
+        <TiendaClient />
+      </Suspense>
     </div>
   );
 }

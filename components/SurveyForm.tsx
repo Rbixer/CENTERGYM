@@ -16,6 +16,14 @@ type Questionnaire = {
   questions: PublicQuestion[];
 };
 
+type SurveyReward = {
+  code: string;
+  discountType: "percent" | "fixed" | "free" | string;
+  discountValue: number;
+  minSubtotalCents: number | null;
+  validUntil: string | null;
+};
+
 type Props = {
   /** Si viene de la página (RSC), evita un fetch extra y compila menos en `next dev`. */
   initialQuestionnaire?: Questionnaire;
@@ -51,7 +59,10 @@ export function SurveyForm({ initialQuestionnaire, formToken }: Props) {
   const [loading, setLoading] = useState(!hydrateFromServer);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ submittedAt: string } | null>(null);
+  const [done, setDone] = useState<{
+    submittedAt: string;
+    reward: SurveyReward | null;
+  } | null>(null);
   const [alreadyDone, setAlreadyDone] = useState(false);
 
   useEffect(() => {
@@ -124,7 +135,7 @@ export function SurveyForm({ initialQuestionnaire, formToken }: Props) {
         }),
       });
       const raw = await res.text();
-      let j: { error?: string; submittedAt?: string } = {};
+      let j: { error?: string; submittedAt?: string; reward?: SurveyReward | null } = {};
       if (raw) {
         try {
           j = JSON.parse(raw) as typeof j;
@@ -154,6 +165,7 @@ export function SurveyForm({ initialQuestionnaire, formToken }: Props) {
       }
       setDone({
         submittedAt: j.submittedAt ?? new Date().toISOString(),
+        reward: j.reward ?? null,
       });
     } catch {
       setError(
@@ -197,6 +209,9 @@ export function SurveyForm({ initialQuestionnaire, formToken }: Props) {
           Gracias por completar el cuestionario y por valorar a tu entrenador o
           turno.
         </p>
+
+        {done.reward ? <SurveyRewardCard reward={done.reward} /> : null}
+
         <p className="mt-4 text-xs text-emerald-900/70 dark:text-emerald-200/60">
           Fecha y hora del envío:{" "}
           {when.toLocaleString(undefined, {
@@ -412,5 +427,88 @@ export function SurveyForm({ initialQuestionnaire, formToken }: Props) {
         {submitting ? "Enviando…" : "Enviar respuestas"}
       </button>
     </form>
+  );
+}
+
+/**
+ * Tarjeta de recompensa mostrada después de enviar la encuesta. Incluye el
+ * código en grande, una descripción legible del descuento y un botón para
+ * copiarlo + un enlace directo a /tienda con el código pre-aplicado.
+ */
+function SurveyRewardCard({ reward }: { reward: SurveyReward }) {
+  const [copied, setCopied] = useState(false);
+
+  const discountText = (() => {
+    if (reward.discountType === "percent") return `${reward.discountValue}% de descuento`;
+    if (reward.discountType === "fixed") {
+      const q = (reward.discountValue / 100).toLocaleString("es-GT", {
+        minimumFractionDigits: 2,
+      });
+      return `Q${q} de descuento`;
+    }
+    return "100% de descuento";
+  })();
+
+  const minText =
+    reward.minSubtotalCents && reward.minSubtotalCents > 0
+      ? ` en compras desde Q${(reward.minSubtotalCents / 100).toLocaleString("es-GT", {
+          minimumFractionDigits: 2,
+        })}`
+      : "";
+
+  const validityText = reward.validUntil
+    ? `Válido hasta el ${new Date(reward.validUntil).toLocaleDateString("es-GT", {
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      })}.`
+    : "";
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(reward.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* no-op */
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-2xl border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-yellow-50 p-5 text-left shadow-sm dark:border-amber-700 dark:from-amber-950/40 dark:to-yellow-950/30">
+      <p className="text-center text-xs font-bold uppercase tracking-widest text-amber-700 dark:text-amber-300">
+        🎁 Tu recompensa
+      </p>
+      <p className="mt-2 text-center text-base font-semibold text-amber-900 dark:text-amber-100">
+        {discountText} en la tienda{minText}
+      </p>
+
+      <div className="mt-4 flex flex-col items-center gap-3 rounded-xl border border-amber-200 bg-white px-4 py-4 dark:border-amber-800 dark:bg-zinc-900">
+        <code className="text-2xl font-bold tracking-[0.2em] text-amber-900 sm:text-3xl dark:text-amber-200">
+          {reward.code}
+        </code>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => void copy()}
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+          >
+            {copied ? "¡Copiado!" : "Copiar código"}
+          </button>
+          <a
+            href={`/tienda?promo=${encodeURIComponent(reward.code)}`}
+            className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-500"
+          >
+            Usar ahora →
+          </a>
+        </div>
+      </div>
+
+      {validityText ? (
+        <p className="mt-3 text-center text-[11px] text-amber-800/80 dark:text-amber-200/70">
+          {validityText}
+        </p>
+      ) : null}
+    </div>
   );
 }

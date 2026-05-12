@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AdminResultsCharts } from "@/components/AdminResultsCharts";
 import { AdminRutinasPanel } from "@/components/AdminRutinasPanel";
 import { AdminVentasTab } from "@/components/AdminVentasTab";
+import { AdminPromosPanel } from "@/components/AdminPromosPanel";
 import { GymCenterLogo } from "@/components/GymCenterLogo";
 import { useToast } from "@/components/ToastProvider";
 
-type Tab = "preguntas" | "turnos" | "resultados" | "ventas" | "rutinas";
+type Tab = "preguntas" | "turnos" | "resultados" | "ventas" | "rutinas" | "promos";
 
 type QuestionOption = {
   id: string;
@@ -161,7 +162,7 @@ export function AdminPanel() {
         <div className="min-w-0">
           <GymCenterLogo className="max-h-20 w-auto max-w-[220px] object-contain object-left sm:max-h-24" />
           <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-            Preguntas, turnos, resultados, ventas y rutinas
+            Preguntas, turnos, clientes, ventas y rutinas
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -180,9 +181,10 @@ export function AdminPanel() {
           [
             ["preguntas", "Preguntas", "Preguntas"],
             ["turnos", "Turno / Entrenador", "Turnos"],
-            ["resultados", "Resultados", "Resultados"],
+            ["resultados", "Clientes", "Clientes"],
             ["ventas", "Ventas", "Ventas"],
             ["rutinas", "Rutinas", "Rutinas"],
+            ["promos", "Promociones", "Promos"],
           ] as const
         ).map(([k, label, shortLabel]) => (
           <button
@@ -198,6 +200,8 @@ export function AdminPanel() {
               tab === k
                 ? k === "rutinas"
                   ? "-mb-px border-b-2 border-violet-600 px-2 py-2 text-center text-xs font-medium text-violet-700 sm:px-3 sm:text-sm dark:text-violet-400"
+                  : k === "promos"
+                  ? "-mb-px border-b-2 border-amber-500 px-2 py-2 text-center text-xs font-medium text-amber-700 sm:px-3 sm:text-sm dark:text-amber-400"
                   : "-mb-px border-b-2 border-emerald-600 px-2 py-2 text-center text-xs font-medium text-emerald-700 sm:px-3 sm:text-sm dark:text-emerald-400"
                 : "px-2 py-2 text-center text-xs text-zinc-500 hover:text-foreground sm:px-3 sm:text-sm"
             }
@@ -233,6 +237,7 @@ export function AdminPanel() {
           />
         ) : null}
         {tab === "ventas" ? <AdminVentasTab /> : null}
+        {tab === "promos" ? <AdminPromosPanel /> : null}
         {tab === "rutinas" ? (
           <div>
             <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">
@@ -641,12 +646,45 @@ function ResultsTab({
   pie: { label: string; value: number }[];
   onRefresh: () => Promise<void>;
 }) {
+  const [search, setSearch] = useState("");
+  const [ratingFilter, setRatingFilter] = useState<"all" | "1" | "2" | "3" | "4" | "5">("all");
+  const [commentsOnly, setCommentsOnly] = useState(false);
+
+  const filteredSubmissions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return submissions.filter((s) => {
+      if (ratingFilter !== "all" && s.trainerRating !== Number(ratingFilter)) return false;
+      if (commentsOnly && !s.trainerComment?.trim()) return false;
+      if (!q) return true;
+      return (
+        s.trainerLabel.toLowerCase().includes(q) ||
+        (s.trainerComment?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [commentsOnly, ratingFilter, search, submissions]);
+
+  const summary = useMemo(() => {
+    const rated = submissions.filter((s) => s.trainerRating != null);
+    const ratedCount = rated.length;
+    const avgStars =
+      ratedCount > 0
+        ? rated.reduce((acc, s) => acc + (s.trainerRating ?? 0), 0) / ratedCount
+        : null;
+    const withComment = submissions.filter((s) => s.trainerComment?.trim()).length;
+    return {
+      total: submissions.length,
+      ratedCount,
+      avgStars,
+      withComment,
+    };
+  }, [submissions]);
+
   return (
     <div className="min-w-0 space-y-10">
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
         <p className="min-w-0 text-sm text-zinc-600 dark:text-zinc-400">
           Sí vs No, calificación por estrellas, comentarios, distribución por
-          pregunta y envíos.
+          pregunta y clientes.
         </p>
         <div className="flex shrink-0 flex-wrap gap-2">
           <button
@@ -665,6 +703,27 @@ function ResultsTab({
         </div>
       </div>
 
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Total clientes</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{summary.total}</p>
+        </article>
+        <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Promedio estrellas</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+            {summary.avgStars != null ? `${summary.avgStars.toFixed(1)} / 5` : "—"}
+          </p>
+        </article>
+        <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Con valoración</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{summary.ratedCount}</p>
+        </article>
+        <article className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-900/50">
+          <p className="text-xs uppercase tracking-wide text-zinc-500">Con comentario</p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums">{summary.withComment}</p>
+        </article>
+      </section>
+
       <AdminResultsCharts
         trainerSiNo={trainerSiNo}
         trainerStars={trainerStars}
@@ -673,7 +732,47 @@ function ResultsTab({
       />
 
       <section>
-        <h2 className="text-lg font-semibold">Envíos individuales</h2>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Clientes individuales</h2>
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              Filtra por entrenador, comentario o calificación.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Buscar por turno o comentario..."
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm sm:w-64 dark:border-zinc-600 dark:bg-zinc-900"
+            />
+            <select
+              value={ratingFilter}
+              onChange={(e) => setRatingFilter(e.target.value as typeof ratingFilter)}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            >
+              <option value="all">Todas las estrellas</option>
+              <option value="5">5 estrellas</option>
+              <option value="4">4 estrellas</option>
+              <option value="3">3 estrellas</option>
+              <option value="2">2 estrellas</option>
+              <option value="1">1 estrella</option>
+            </select>
+            <label className="inline-flex select-none items-center gap-2 rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600">
+              <input
+                type="checkbox"
+                checked={commentsOnly}
+                onChange={(e) => setCommentsOnly(e.target.checked)}
+                className="size-4 accent-emerald-600"
+              />
+              Solo comentarios
+            </label>
+          </div>
+        </div>
+        <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+          Mostrando {filteredSubmissions.length} de {submissions.length} registros
+        </div>
         <div className="mt-3 overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-700">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-800/80">
@@ -686,14 +785,14 @@ function ResultsTab({
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200 dark:divide-zinc-700">
-              {submissions.length === 0 ? (
+              {filteredSubmissions.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-3 py-6 text-center text-zinc-500">
-                    Sin envíos todavía
+                    No hay clientes que coincidan con el filtro
                   </td>
                 </tr>
               ) : (
-                submissions.map((s) => (
+                filteredSubmissions.map((s) => (
                   <tr key={s.id} className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40">
                     <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-300">
                       {new Date(s.submittedAt).toLocaleString()}

@@ -78,6 +78,19 @@ model SalesOrder {
   submittedAt  DateTime         @default(now())
   verified     Boolean          @default(false)
   verifiedAt   DateTime?
+  /// Suma de `priceCents*quantity` en el momento del pedido (snapshot). Calculado
+  /// y persistido por el servidor para que el total no dependa del cliente.
+  subtotalCents  Int           @default(0)
+  /// Descuento aplicado en centavos (positivo). 0 cuando no hay código.
+  discountCents  Int           @default(0)
+  /// `subtotalCents - discountCents`, nunca menor que 0.
+  totalCents     Int           @default(0)
+  /// Código que se canjeó (si lo hubo). Persiste el texto literal del código
+  /// aunque el `PromoCode` se desactive o borre.
+  promoCode      String?
+  /// Relación opcional al canje. La línea de canje sí guarda referencia fuerte.
+  promoRedemptionId String?    @unique
+  promoRedemption PromoRedemption? @relation("OrderRedemption", fields: [promoRedemptionId], references: [id], onDelete: SetNull)
   lines        SalesOrderLine[]
 }
 
@@ -88,8 +101,77 @@ model SalesOrderLine {
   productId String
   product   Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
   quantity  Int        @default(1)
+  /// Precio unitario al momento del pedido (snapshot histórico). Si después
+  /// cambias el precio del producto, los pedidos antiguos siguen mostrando
+  /// el precio que cobraste.
+  priceCents Int       @default(0)
 
   @@unique([orderId, productId])
+}
+
+/// Código de promoción canjeable en la tienda o emitido como recompensa
+/// (p. ej. al enviar la encuesta). Un solo modelo cubre todos los tipos
+/// (`kind`) y reglas (`discountType`).
+model PromoCode {
+  id            String   @id @default(cuid())
+  /// Código en mayúsculas, único (ej. "VERANO20"). Indexado y único.
+  code          String   @unique
+  /// Descripción interna mostrada en el admin.
+  description   String   @default("")
+  /// Casos de uso:
+  /// - "store": descuento en /tienda
+  /// - "survey_reward": código único emitido al completar la encuesta
+  /// - "day_pass": pase de día (futura iteración)
+  /// - "membership": descuento en mensualidad (futura iteración)
+  /// - "referral": código de referido (futura iteración)
+  kind          String   @default("store")
+  /// "percent" | "fixed" | "free"
+  discountType  String   @default("percent")
+  /// Significado depende de `discountType`:
+  /// - percent: 1..100 (porcentaje a descontar)
+  /// - fixed:   valor en centavos a descontar
+  /// - free:    se ignora (descuento = subtotal)
+  discountValue Int      @default(0)
+  /// Subtotal mínimo en centavos para aplicar el código.
+  minSubtotalCents Int?
+  /// Número total de canjes permitidos (null = ilimitado).
+  maxUses       Int?
+  /// Canjes ya consumidos (incrementado atómicamente en transacción).
+  uses          Int      @default(0)
+  /// Canjes máximos por la misma "identidad" (ip/cookie). null = sin tope.
+  maxUsesPerUser Int?    @default(1)
+  validFrom     DateTime?
+  validUntil    DateTime?
+  /// Cuando `kind = survey_reward`, este campo guarda el id del `Submission`
+  /// que lo originó para idempotencia: si llega el mismo submit dos veces,
+  /// solo se crea un código.
+  submissionId  String?  @unique
+  /// Notas internas / contexto creado por el admin.
+  notes         String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  redemptions   PromoRedemption[]
+}
+
+/// Cada vez que alguien canjea un `PromoCode` se crea una fila aquí. Sirve
+/// para auditar, reportar y, en el caso de la tienda, queda relacionada con
+/// el pedido (`SalesOrder.promoRedemptionId`).
+model PromoRedemption {
+  id           String      @id @default(cuid())
+  codeId       String
+  code         PromoCode   @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  /// Hash HMAC truncado de la IP + UA (o cookie estable) para contar usos por
+  /// usuario sin guardar PII.
+  userKey      String?
+  amountSavedCents Int     @default(0)
+  redeemedAt   DateTime    @default(now())
+  /// Relación inversa con el pedido cuando aplica.
+  order        SalesOrder? @relation("OrderRedemption")
+
+  @@index([codeId])
+  @@index([userKey])
 }
 
 /// Ejercicio individual de la biblioteca: GIF, nombre, descripción, categoría.
