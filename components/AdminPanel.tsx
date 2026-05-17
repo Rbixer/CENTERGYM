@@ -663,9 +663,64 @@ function ResultsTab({
   pie: { label: string; value: number }[];
   onRefresh: () => Promise<void>;
 }) {
+  const { toast, confirm } = useToast();
   const [search, setSearch] = useState("");
   const [ratingFilter, setRatingFilter] = useState<"all" | "1" | "2" | "3" | "4" | "5">("all");
   const [commentsOnly, setCommentsOnly] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPin, setResetPin] = useState("");
+  const [resetting, setResetting] = useState(false);
+
+  async function handleResetSurveys() {
+    const ok = await confirm(
+      "¿Borrar TODOS los registros de encuesta? Se eliminan envíos, respuestas y códigos de recompensa ligados. Esta acción no se puede deshacer.",
+    );
+    if (!ok) return;
+    setResetPin("");
+    setResetOpen(true);
+  }
+
+  async function submitReset() {
+    if (resetting) return;
+    const pin = resetPin.trim();
+    if (!pin) {
+      toast("Escribe el PIN para continuar.", "error");
+      return;
+    }
+    setResetting(true);
+    try {
+      const res = await fetch("/api/admin/submissions/reset", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        deleted?: { submissions?: number; promoCodes?: number };
+      };
+      if (res.status === 401) {
+        toast("Sesión expirada. Vuelve a iniciar sesión.", "error");
+        return;
+      }
+      if (!res.ok) {
+        toast(j.error ?? "No se pudo restablecer las encuestas.", "error");
+        return;
+      }
+      const n = j.deleted?.submissions ?? 0;
+      toast(
+        `Encuestas restablecidas: ${n} registro${n === 1 ? "" : "s"} eliminado${n === 1 ? "" : "s"}.`,
+        "success",
+      );
+      setResetOpen(false);
+      setResetPin("");
+      await onRefresh();
+    } catch {
+      toast("Error de red al restablecer.", "error");
+    } finally {
+      setResetting(false);
+    }
+  }
 
   const filteredSubmissions = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -717,6 +772,14 @@ function ResultsTab({
           >
             Exportar CSV
           </a>
+          <button
+            type="button"
+            onClick={() => void handleResetSurveys()}
+            disabled={summary.total === 0}
+            className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200 dark:hover:bg-red-900/40"
+          >
+            Restablecer encuestas
+          </button>
         </div>
       </div>
 
@@ -844,6 +907,70 @@ function ResultsTab({
           </table>
         </div>
       </section>
+
+      {resetOpen ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="survey-reset-title"
+          onClick={() => {
+            if (!resetting) {
+              setResetOpen(false);
+              setResetPin("");
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-zinc-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="survey-reset-title" className="text-base font-semibold text-red-800 dark:text-red-200">
+              Confirmar restablecimiento
+            </h3>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Escribe el PIN de administrador para borrar todos los registros de encuesta.
+            </p>
+            <label className="mt-4 block text-sm font-medium">
+              PIN
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                value={resetPin}
+                onChange={(e) => setResetPin(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submitReset();
+                }}
+                placeholder="••••"
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-center text-lg tracking-[0.3em] dark:border-zinc-600 dark:bg-zinc-950"
+                autoFocus
+              />
+            </label>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={() => {
+                  setResetOpen(false);
+                  setResetPin("");
+                }}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium dark:border-zinc-600"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={() => void submitReset()}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
+              >
+                {resetting ? "Borrando…" : "Restablecer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

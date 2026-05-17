@@ -189,6 +189,13 @@ export function hashIpForStorage(ip: string): string | null {
  * cambia el UA y se evade), pero captura el caso típico del entrenador que
  * intenta votar varias veces desde el mismo móvil borrando cookies.
  */
+/** Vacía los contadores en memoria (p. ej. tras restablecer encuestas en admin). */
+export function clearSurveyRateLimits(): void {
+  ipBuckets.clear();
+  deviceBuckets.clear();
+  hitsSinceLastPurge = 0;
+}
+
 export function getDeviceKey(req: Request, ip: string): string {
   const ua = (req.headers.get("user-agent") ?? "").trim().slice(0, 256);
   const secret = process.env.ADMIN_SECRET;
